@@ -7,10 +7,12 @@
 set -eu
 cd "$(dirname "$0")/.."
 
-echo "== regenerate schematic"
+echo "== committed schematic matches the generator"
+before=$(sha256sum xiao-ac-dimmer.kicad_sch | cut -d' ' -f1)
 python3 tools/gen_sch.py > /dev/null
-if ! git diff --quiet -- xiao-ac-dimmer.kicad_sch; then
-    echo "FAIL: xiao-ac-dimmer.kicad_sch is stale -- regenerate and commit it"
+after=$(sha256sum xiao-ac-dimmer.kicad_sch | cut -d' ' -f1)
+if [ "$before" != "$after" ]; then
+    echo "FAIL: xiao-ac-dimmer.kicad_sch was stale -- regenerated, review and commit"
     exit 1
 fi
 
