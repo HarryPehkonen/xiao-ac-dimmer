@@ -37,12 +37,22 @@ def mm(v):
 # (row by row, no overlaps by construction) rather than hand-placed, so the
 # same script keeps working when the part list changes.
 GROUPS = [
-    ((4, 6, 52, 90), [("J3", 0), ("F1", 0), ("MOV1", 0), ("Q1", 0),
-                      ("R4", 0), ("RS1", 0), ("CS1", 0), ("J4", 0)]),
-    ((58, 6, 96, 90), [("PS1", 0), ("U2", 180), ("U1", 180),
-                       ("R1", 0), ("R2", 0)]),
-    ((102, 6, 146, 90), [("J1", 0), ("J2", 0), ("R3", 0), ("R5", 0),
-                         ("D5", 0), ("C1", 0), ("C2", 0)]),
+    # mains: cord in -> fuse -> protection -> snubber -> cord out, then the
+    # triac last so its gate ends up beside the gate resistor's own zone
+    ((4, 6, 50, 90), [("J3", 0), ("F1", 0), ("MOV1", 0), ("RS1", 0),
+                      ("CS1", 0), ("J4", 0), ("Q1", 0)]),
+    # the mains-side resistors, in their own strip against the barrier: R4 is
+    # the triac gate resistor (U2 pin 4 -> Q1 gate), R1/R2 are the zero-cross
+    # legs into U1 pins 1/2.  Packing them in with the mains parts is what
+    # walled the gate cluster in.
+    ((52, 6, 58, 90), [("R4", 90), ("R1", 90), ("R2", 90)]),
+    # parts that straddle the barrier, U2 first so its logic pins face the
+    # logic-side cluster and its mains pins face the resistor strip
+    ((62, 6, 96, 90), [("U2", 180), ("U1", 180), ("PS1", 0)]),
+    # logic-side resistors and the 5 V rail, right of the barrier
+    ((100, 6, 126, 90), [("R3", 90), ("R5", 0), ("D5", 0), ("C1", 0),
+                         ("C2", 0)]),
+    ((130, 6, 147, 90), [("J1", 0), ("J2", 0)]),
 ]
 MARGIN = 2.5          # mm between packed parts
 BOARD_W, BOARD_H = 150.0, 95.0
@@ -163,7 +173,7 @@ def build():
     return board
 
 
-M = ("L_IN|L_FUSED|N_AC|LOAD_L|SNUB_MID|ZCD_A|ZCD_B")
+M = ("L_IN|L_FUSED|N_AC|LOAD_L|SNUB_MID|ZCD_A|ZCD_B|MOC_MT2|TRIAC_G")
 RULES = f'''(version 1)
 (rule "mains isolation barrier (mains vs logic, 3 mm)"
 \t(constraint clearance (min 3mm))

@@ -18,13 +18,21 @@ with the schematic about connectivity.
 
 ## What does not work yet
 
-- **3 of 16 nets are unrouted**: `TRIAC_G` (Q1 gate → R4), `MOC_MT2`
-  (R4 → U2 pin 4), `MOC_A` (R3 → U2 pin 1). All three sit in the cluster
-  between the barrier and the mains zone, where the 3 mm barrier keepout closes
-  the available channel. DRC reports 3 `unconnected_items` errors.
-- 4 `hole_to_hole` warnings from vias landing near pads.
-- 2 `silk_overlap` warnings no longer appear after `AutoPlaceFields()`, but the
-  check still runs.
+- **2 of 16 nets are unrouted**: `LOAD_L` (J4 → Q1 pin 2) and `ZCD_OUT`
+  (R5 → U1 pin 5). Both targets are pads inside a 2.54 mm pin column, where the
+  pad's own neighbours veto most of its opening (measured: 19–22 of 49 cells)
+  and the survivors do not reach open space on either layer. DRC reports 3
+  `unconnected_items` errors. `TRIAC_G`, `MOC_MT2` and `MOC_A` failed here too
+  and now route.
+- 2 `hole_to_hole` warnings from vias landing near pads; 1 `silk_overlap`
+  warning that `AutoPlaceFields()` did not clear.
+- Routing quality: segments merged into single runs (**410**, down from 2,161 —
+  one track per 0.5 mm grid step was pure bloat). No shorts, no clearance
+  violations.
+- The router's clearance floor is **measured, not guessed**: at 0.25 mm margin
+  DRC reported 12 shorts against `no-net` pads (a diagonal run passes ~0.4 mm
+  closer to a pad than the cell-centre model predicts); 0.5 mm gave none; 0.4 mm
+  is the floor that still lets dense pin columns route.
 
 **This board is not fab-ready and must not be ordered.** `check_board.py` is
 deliberately NOT part of `tools/ci.sh` while it fails — wiring a failing gate
@@ -32,12 +40,15 @@ into CI teaches you to ignore CI.
 
 ## Next steps, in order
 
-1. Move R4 and R3 out of the packed mains/logic rows so that cluster has room,
-   or route those three connections from explicit coordinates.
-2. Add a via-to-pad keepout in the router (vias currently only avoid pads by a
-   2-cell margin at the path ends).
-3. Then, and only then: gerbers + drill export, a gerber-viewer eyeball, and
-   the DFM check with the fab's rules.
+1. Get `LOAD_L` and `ZCD_OUT` home. Both are pads buried in a pin column, so the
+   options are: widen those pads' openings (open a short channel along the pin
+   row, not just perpendicular to it), or route those two from explicit
+   coordinates. Placement is no longer the constraint — the pads are reachable,
+   the opening is what fails.
+2. Clear the 2 `hole_to_hole` and 1 `silk_overlap` warnings.
+3. Then, and only then: gerbers + drill export, a gerber-viewer eyeball, and the
+   DFM check with the fab's rules. Wire `check_board.py` into `tools/ci.sh` on
+   the same commit that makes it pass.
 
 ## Safety status (unchanged, and not affected by any of the above)
 
