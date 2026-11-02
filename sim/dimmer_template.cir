@@ -1,0 +1,14 @@
+* Leading-edge (phase-control) AC dimmer - 120 Vrms / 60 Hz, resistive load
+* Trigger delay @TD@ s after each zero crossing (per half cycle).
+* Switch closes at the trigger and opens at the zero crossing: exactly what a
+* triac does into a resistive load (it commutates when the current hits zero).
+.param td=@TD@
+V1 in 0 sin(0 170 60)
+Vg ctrl 0 pulse(0 5 {td} 1n 1n {8.333333m-td} 8.333333m)
+S1 in out ctrl 0 SWMOD
+.model SWMOD SW(Ron=0.01 Roff=1e9 Vt=2.5 Vh=0)
+R1 out 0 240
+.tran 2u 200m
+.meas tran vrms RMS v(out) from=100m to=200m
+.meas tran vpk MAX v(out) from=100m to=200m
+.end
