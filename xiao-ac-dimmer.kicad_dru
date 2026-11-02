@@ -1,0 +1,7 @@
+(version 1)
+(rule "mains isolation barrier (mains vs logic, 3 mm)"
+	(constraint clearance (min 3mm))
+	(condition "(A.NetName =~ '^/?(L_IN|L_FUSED|N_AC|LOAD_L|SNUB_MID|ZCD_A|ZCD_B)$' && !(B.NetName =~ '^/?(L_IN|L_FUSED|N_AC|LOAD_L|SNUB_MID|ZCD_A|ZCD_B)$')) || (B.NetName =~ '^/?(L_IN|L_FUSED|N_AC|LOAD_L|SNUB_MID|ZCD_A|ZCD_B)$' && !(A.NetName =~ '^/?(L_IN|L_FUSED|N_AC|LOAD_L|SNUB_MID|ZCD_A|ZCD_B)$'))"))
+(rule "mains track width"
+	(constraint track_width (min 1mm))
+	(condition "A.NetName =~ '^/?(L_IN|L_FUSED|N_AC|LOAD_L|SNUB_MID|ZCD_A|ZCD_B)$'"))
