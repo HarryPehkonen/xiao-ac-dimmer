@@ -24,6 +24,10 @@ with the schematic about connectivity.
 - Every footprint id carries its **library nickname** (`Resistor_THT:R_Axial_…`,
   not `R_Axial_…`), so "update footprint from library" works — the workflow any
   part swap needs. `FootprintLoad()` was dropping it on placement.
+- **The committed board is the generated board**: `tools/check_regen.py`, the
+  fifth gate, regenerates in a throwaway copy of `tools/` and compares every
+  footprint and copper item against `xiao-ac-dimmer.kicad_pcb` (24 and 502
+  today). See "How the board is compared to the generator" below.
 - `check_board.py` is wired into `tools/ci.sh` **together with its own tests**
   (`pytest tools/tests`), so a board that stops routing, gains a violation,
   loses a footprint's library link, loses a mounting hole's copper keepout, or
@@ -285,7 +289,7 @@ unit-tested.
   closer to a pad than the cell-centre model predicts); 0.5 mm gave none; 0.4 mm
   is the floor that still lets dense pin columns route.
 
-## Why the board has no "matches the generator" hash check
+## How the board is compared to the generator
 
 One pipeline side effect to know about: **`pcbnew.SaveBoard()` rewrites the
 `.kicad_pro`** when the board is written back into its own project directory —
@@ -299,15 +303,58 @@ readable: `git checkout -- xiao-ac-dimmer.kicad_pro`.
 
 The schematic has a hash check (`tools/ci.sh` hashes it together with
 `symbols/xiao-ac.kicad_sym`, regenerates, compares hashes).
-The board cannot, and that is not a defect in the gate: KiCad gives every item a
-fresh UUID on each run and writes footprints in an order derived from those
-UUIDs, so two runs of the same generator never produce the same bytes. Two runs
-were compared structurally instead — 24 footprints, 506 track/via items and the
-outline, each as a set — and they are identical, so the **geometry** is
-reproducible even though the file is not. `tools/tests/test_board_routes.py` is
-the board's equivalent: it regenerates into a temp directory (keeping the
-`.kicad_dru` beside it, so the 3 mm barrier is part of the check) and runs DRC
-on the result.
+The board cannot use that trick, and DRC alone does not close the hole: a
+hand-edited `xiao-ac-dimmer.kicad_pcb` — a track moved, a pad renumbered, the
+mains barrier quietly narrowed by a tenth of a millimetre — can be perfectly
+DRC-clean. KiCad gives every item a fresh UUID on each run and writes those items
+back in an order derived from those UUIDs, so two runs of the same generator never
+produce the same bytes and no hash can be compared.
+
+What *is* reproducible is the board itself, so that is what the gate compares:
+**`tools/check_regen.py`** (the fifth `ci.sh` gate) copies `tools/` to a throwaway
+directory, regenerates the schematic and board there, and compares the result with
+the committed board item by item — every footprint as
+`(reference, value, x, y, rotation, layer)` and every track and via as
+`(net, class, layer, both endpoints, width)`, sorted. Measured: **24/24 footprints
+and 502/502 tracks+vias** identical (487 segments + 15 vias). It was run five
+times while landing this — a clean pass, the two sabotages below, and a clean
+re-check after each revert — and every clean pass reported those counts.
+
+The gate has teeth: nudging `MOV1` 0.5 mm by hand in the committed
+`xiao-ac-dimmer.kicad_pcb` makes it exit 1 and name the part —
+
+```
+FAIL: footprints differ -- the committed board is not what the generator produces
+  only in the committed board: ('MOV1', 'S14K150', 7.025, 24.25, 0.0, 0)
+  only in the generated board: ('MOV1', 'S14K150', 6.525, 24.25, 0.0, 0)
+```
+
+…and so does nudging a **copper** item 0.5 mm, which is the other half of the same
+question and which the footprint half would not have noticed (a `+3V3` track's
+endpoint moved from x = 131.5 to 132.0):
+
+```
+FAIL: copper differ -- the committed board is not what the generator produces
+  only in the committed board: ('+3V3', 'PCB_TRACK', 0, 132.0, 11.0, 130.5, 11.0, 0.6)
+  only in the generated board: ('+3V3', 'PCB_TRACK', 0, 131.5, 11.0, 130.5, 11.0, 0.6)
+```
+
+Both sabotages were reverted in place (the board and the `.kicad_pro` restored
+from copies taken before the nudge) and the gate then reported 24/24 and 502/502
+again, so the tree is clean.
+
+Scope, stated honestly: this catches the board disagreeing with the generator. It
+says nothing about whether the design is right and nothing about safety — the
+routing is still gated separately by `tools/tests/test_board_routes.py`, which
+regenerates into a temp directory (keeping the `.kicad_dru` beside it, so the
+3 mm barrier is part of the check) and runs DRC on the result.
+
+One accounting note so two numbers in one file do not look like a contradiction:
+earlier sections here describe this board as **491 track segments** / 506 copper
+items (the 150 × 95 → 57 mm resize, measured before the XIAO socket block moved
+the parts). That pass is a different revision: the socket pass (commit `3929cc5`)
+re-routed and cut four segments, so today's board is 487 + 15 = **502**. The gate
+prints the live count; trust it over any number written in prose.
 
 ## Next steps
 

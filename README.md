@@ -37,6 +37,31 @@ a generated one can (see Gates).
    This gate caught a rotated-symbol pin swap that would have fitted the
    Schottky diode backwards.
 3. **ERC clean.** `kicad-cli sch erc` reports 0 violations.
+4. **Board DRC clean.** `tools/check_board.py` — 0 errors, 0 warnings, including
+   the 3 mm mains/logic clearance rule in `xiao-ac-dimmer.kicad_dru`. The same
+   check asserts the rules DRC has no rule for: every footprint id names its
+   library, the four M3 mounting holes are where the design says with an empty
+   6 mm copper keepout, and the two socket rows are one mating interface that a
+   XIAO actually fits (15.24 mm apart — the defect that got through ERC, DRC,
+   the netlist and the router).
+5. **Board == generator.** `tools/check_regen.py` regenerates the board in a
+   throwaway copy of the tools and compares every footprint and every copper
+   item against the committed board — 24 footprints (20 parts + 4 mounting
+   holes) and 502 tracks+vias today.
+   The board file is not *byte*-reproducible (pcbnew stamps fresh UUIDs and
+   writes items in its own order), so this compares geometry, which is the part
+   a person would have had to edit. `docs/PCB-NOTES.md` has the measurement and
+   the two sabotage runs.
+6. **The gates' own tests.** `tools/tests/test_board_gate.py` breaks each rule
+   that check 4 enforces — a moved or renamed hole, a track or pad inside the
+   keepout, a hole tied to a net, a plated or undersized hole, a footprint id
+   with no library nickname, a missing hole, a socket row moved or respaced —
+   and asserts `check_board.py` reports it. `tools/tests/test_pin_names.py` does
+   the same for check 2's pin names: a renamed pin, the rows back to
+   `Pin_1..Pin_7`, a renumbered row. `test_board_routes.py` regenerates and runs
+   DRC; `test_route_geometry.py` and `test_route_open.py` pin the router's
+   geometry and its off-grid edge case. A rule that has never been seen to fail
+   is not a gate.
 
 ## Circuit in one paragraph
 
@@ -89,16 +114,25 @@ Part-by-part reasoning, including what is deliberately *not* proven: DESIGN.md.
 
 ```
 xiao-ac-dimmer.kicad_sch   generated schematic (the reviewable design)
+xiao-ac-dimmer.kicad_pcb   generated board -- never hand-edit
+xiao-ac-dimmer.kicad_dru   the 3 mm mains/logic barrier and the 1 mm mains width
 xiao-ac-dimmer.kicad_pro   project + netclass settings
 symbols/xiao-ac.kicad_sym  the socket rows' symbols, pins named D0..D6 / VBUS..D7
 sym-lib-table fp-lib-table so the libraries resolve without global config
 tools/kicadlib.py          s-expression reader, symbol flattening (extends)
 tools/gen_sch.py           the circuit + schematic generator
+tools/gen_pcb.py           placement + board generator
+tools/route.py             the maze router
 tools/check_netlist.py     gate: exported netlist == intended netlist (and pin names)
+tools/check_board.py       gate: kicad-cli pcb drc + the rules DRC cannot express
+tools/check_regen.py       gate: committed board == generated board (geometry)
 tools/ci.sh                the gate
 tools/probe_libs.py        diagnostic: does each embedded symbol load?
+tools/tests/               the gates' own tests (every rule, seen to fail)
 sim/                       ngspice decks and measured results
+docs/PCB-NOTES.md          board status, and what the router needed
 DESIGN.md                  engineering decisions and open items
+BOM.md                     sourcing and mechanical notes
 ```
 
 ## Requirements
