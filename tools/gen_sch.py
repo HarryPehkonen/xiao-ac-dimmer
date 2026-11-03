@@ -30,6 +30,146 @@ R_AX = "Resistor_THT:R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal"
 DIP6 = "Package_DIP:DIP-6_W7.62mm"
 SOCK7 = "Connector_PinSocket_2.54mm:PinSocket_1x07_P2.54mm_Vertical"
 
+# -------------------------------------------------------------- symbols -----
+# J1 and J2 are the two rows of one XIAO ESP32C3 socket.  Drawn as a generic
+# Conn_01x07, each row's pins come out as "Pin_2", so the schematic cannot say
+# that J1.2 is D1/GPIO3 -- the triac trigger -- without a comment a reviewer
+# has to trust.  Instead each row gets a symbol whose pins carry the module's
+# own names; the exported netlist then carries them too, and
+# tools/check_netlist.py asserts them, so the names are checked rather than
+# asserted in prose.
+#
+# The names are Seeed's, from their own symbol library
+# (github.com/Seeed-Studio/OPL_Kicad_Library, "Seeed Studio XIAO Series
+# Library/Seeed_Studio_XIAO_Series.kicad_sym"), which agrees with their
+# published front pinout: seen from the component side with the USB-C
+# connector at the top, the left column reads D0..D6 downwards and the right
+# column reads VBUS (5V), GND, 3V3_OUT, D10, D9/BOOT, D8, D7.  D0 and VBUS are
+# the pins nearest the USB-C end, so pin 1 of both rows is at that end -- the
+# same end the board's gate insists the pads' pin 1 is at.
+#
+# Why not use their symbol directly?  The one they publish for the C3 is the
+# *SMD* variant: 22 pins -- the 14 side pins plus 8 castellated pads (EN,
+# VBAT, MTDI/MTDO/MTMS/MTCK) -- numbered 1..14 continuously across the two
+# columns, ascending from the far end on the right column.  This board carries
+# the module's DIP socket: 14 holes, two 1x07 footprints each numbered 1..7
+# with pin 1 at the USB-C end.  Their symbol would put eight pins in the
+# netlist that have no hole on the board and renumber both rows; their DIP
+# symbols (RP2350, nRF54LM20A) number the columns the same 1..14 way.  So the
+# rows are drawn here, named from their library, and each symbol's description
+# carries the mapping to the module's own DIP pin numbers.
+#
+# Geometry is the module's, not a drawing convention: 2.54 mm pin pitch (their
+# symbol spreads the same 7 pins over 3.81 mm to buy room for its labels) and
+# a body as long as the module, 20.955 mm -- 2.921 mm past pin 1 and 2.794 mm
+# past pin 7, the two overhangs gen_pcb.XIAO measures the module's courtyard
+# with.  The body is drawn 10.16 mm across, which is *not* the module's 17.8 mm
+# width: the symbol is one row of holes, not the module.
+SYMLIB = "xiao-ac"                  # this project's own symbol library
+SYMFILE = os.path.join(ROOT, "symbols", SYMLIB + ".kicad_sym")
+PIN_PITCH = 2.54                    # mm, the module's own pin pitch
+PIN_LEN = 2.54                      # mm, drawn pin length
+BODY_W = 10.16                      # mm, drawn across a row
+USB_OVER = 2.921                    # mm, module body past pin 1 (USB-C end)
+TAIL_OVER = 2.794                   # mm, module body past pin 7 (antenna end)
+
+# Pin 1 first, i.e. both rows start at the USB-C end.
+XIAO_ROWS = (
+    {"ref": "J1", "sym": "XIAO_ESP32C3_Left", "side": "left",
+     "names": ("D0", "D1", "D2", "D3", "D4", "D5", "D6"),
+     "module_pins": "1..7",
+     "value": "XIAO-ESP32C3 left D0..D6"},
+    {"ref": "J2", "sym": "XIAO_ESP32C3_Right", "side": "right",
+     "names": ("VBUS", "GND", "3V3_OUT", "D10", "D9/BOOT", "D8", "D7"),
+     "module_pins": "14..8",     # the module numbers the right column from
+     "value": "XIAO-ESP32C3 right 5V..D7"},      # the far end (VBUS is 14)
+)
+
+
+def row_pin_y(i, n):
+    """Symbol-space y of pin i (0-based, top first): pin 1 at the USB-C end."""
+    return round(((n - 1) / 2 - i) * PIN_PITCH, 4)
+
+
+def effects(size, hide=False):
+    """A KiCad effects block."""
+    out = ["effects", ["font", ["size", str(size), str(size)]]]
+    if hide:
+        out.append(["hide", "yes"])
+    return out
+
+
+def xiao_symbol(row):
+    """One socket row as a library symbol (a parsed s-expression)."""
+    names = row["names"]
+    top, bot = row_pin_y(0, len(names)), row_pin_y(len(names) - 1, len(names))
+    x = round(BODY_W / 2 + PIN_LEN, 4)          # the pin's connection point
+    sgn = -1 if row["side"] == "left" else 1    # pins point away from the body
+    ang = 0 if row["side"] == "left" else 180
+    pins = [["pin", "passive", "line",
+             ["at", str(round(sgn * x, 4)), str(row_pin_y(i, len(names))),
+              str(ang)],
+             ["length", str(PIN_LEN)],
+             ["name", '"%s"' % nm, effects(1.27)],
+             ["number", '"%d"' % (i + 1), effects(1.27)]]
+            for i, nm in enumerate(names)]
+    desc = ("XIAO ESP32C3 socket row, the module's %s column reading %s from "
+            "the USB-C end (the module's own DIP pins %s)."
+            % (row["side"], ", ".join(names), row["module_pins"]))
+    return [
+        "symbol", '"%s"' % row["sym"],
+        ["pin_names", ["offset", "1.016"]],
+        ["exclude_from_sim", "no"], ["in_bom", "yes"], ["on_board", "yes"],
+        ["property", '"Reference"', '"J"', ["at", "0", "12.7", "0"],
+         effects(1.27)],
+        ["property", '"Value"', '"%s"' % row["sym"], ["at", "0", "-12.7", "0"],
+         effects(1.27)],
+        ["property", '"Footprint"', '""', ["at", "0", "0", "0"],
+         effects(1.27, hide=True)],
+        ["property", '"Datasheet"', '""', ["at", "0", "0", "0"],
+         effects(1.27, hide=True)],
+        ["property", '"Description"', '"%s"' % desc, ["at", "0", "0", "0"],
+         effects(1.27, hide=True)],
+        ["symbol", '"%s_0_1"' % row["sym"],
+         ["rectangle",
+          ["start", str(-BODY_W / 2), str(round(top + USB_OVER, 4))],
+          ["end", str(BODY_W / 2), str(round(bot - TAIL_OVER, 4))],
+          ["stroke", ["width", "0.254"], ["type", "default"]],
+          ["fill", ["type", "background"]]],
+         ["text", '"USB-C end"',
+          ["at", "0", str(round(top + USB_OVER - 1.27, 4)), "0"],
+          effects(1.016)]],
+        ["symbol", '"%s_1_1"' % row["sym"]] + pins,
+        ["embedded_fonts", "no"],
+    ]
+
+
+def write_symbol_lib():
+    """Write this project's symbol library.
+
+    build() then reads it back through kicadlib (${KIPRJMOD}/symbols, the path
+    the sym-lib-table entry names), so the library file and the copy the
+    schematic caches in lib_symbols are the same definition -- which is also
+    what ERC's library-symbol check compares.
+    """
+    out = ["(kicad_symbol_lib",
+           "\t(version 20241209)",
+           '\t(generator "gen_sch.py")',
+           '\t(generator_version "9.0")']
+    for row in XIAO_ROWS:
+        out.append(kl.to_text(xiao_symbol(row), 1))
+    out.append(")")
+    os.makedirs(os.path.dirname(SYMFILE), exist_ok=True)
+    open(SYMFILE, "w").write("\n".join(out) + "\n")
+    print(f"wrote {SYMFILE} ({len(XIAO_ROWS)} symbols)")
+
+
+def xiao_pin_names():
+    """{(ref, pin): name} for the socket rows -- the intent check_netlist.py
+    asserts the exported netlist carries."""
+    return {(row["ref"], str(i + 1)): nm
+            for row in XIAO_ROWS for i, nm in enumerate(row["names"])}
+
 
 def uid(*key):
     """Deterministic UUID, so regenerating the schematic is a clean diff."""
@@ -72,14 +212,14 @@ PARTS = [
     {"ref": "R5", "lib": "Device:R", "val": "10k", "fp": R_AX,
      "at": (195, 150, 0), "pins": {"1": "+3V3", "2": "ZCD_OUT"}},
     # XIAO sockets.  LEFT top->bottom = D0..D6 ; RIGHT top->bottom = 5V, GND,
-    # 3V3, D10, D9, D8, D7 (Seeed front pinout diagram).
-    {"ref": "J1", "lib": "Connector_Generic:Conn_01x07", "val": "XIAO left D0..D6",
+    # 3V3, D10, D9, D8, D7 (Seeed front pinout diagram) -- the names come from
+    # XIAO_ROWS above, so the symbol says it and the netlist carries it.
+    {"ref": "J1", "lib": SYMLIB + ":XIAO_ESP32C3_Left", "val": XIAO_ROWS[0]["value"],
      "fp": SOCK7, "at": (220, 100, 0), "pins": {"2": "GATE_DRV", "3": "ZCD_OUT"},
-     "nc": ["1", "4", "5", "6", "7"]},
-    {"ref": "J2", "lib": "Connector_Generic:Conn_01x07",
-     "val": "XIAO right 5V,GND,3V3,D10,D9,D8,D7", "fp": SOCK7, "at": (255, 100, 0),
-     "pins": {"1": "+5V_XIAO", "2": "GND", "3": "+3V3"},
-     "nc": ["4", "5", "6", "7"]},
+     "nc": ["1", "4", "5", "6", "7"], "ref_dy": -12.7, "val_dy": 12.7},
+    {"ref": "J2", "lib": SYMLIB + ":XIAO_ESP32C3_Right", "val": XIAO_ROWS[1]["value"],
+     "fp": SOCK7, "at": (255, 100, 0), "pins": {"1": "+5V_XIAO", "2": "GND", "3": "+3V3"},
+     "nc": ["4", "5", "6", "7"], "ref_dy": -12.7, "val_dy": 12.7},
     # trigger: GPIO3 (D1) -> 220R -> MOC3021 LED ; MOC output drives the gate
     {"ref": "R3", "lib": "Device:R", "val": "220", "fp": R_AX,
      "at": (220, 190, 0), "pins": {"1": "GATE_DRV", "2": "MOC_A"}},
@@ -167,8 +307,8 @@ def symbol_block(part, used_geo, root_uuid, at):
              "\t\t(dnp no)",
              f'\t\t(uuid "{uid("sym", ref)}")']
     for name, text, dy, size, hide in (
-            ("Reference", ref, -5.08, FONT, False),
-            ("Value", part["val"], 5.08, FONT, False),
+            ("Reference", ref, part.get("ref_dy", -5.08), FONT, False),
+            ("Value", part["val"], part.get("val_dy", 5.08), FONT, False),
             ("Footprint", part["fp"], 7.62, 0.254, True),
             ("Datasheet", "", 0, FONT, True),
             ("Description", "", 0, FONT, True)):
@@ -315,6 +455,13 @@ PROJECT_JSON = """{
 """
 
 
+def sym_uri(name):
+    """Where a symbol library lives: the project's own, or KiCad's."""
+    if name == SYMLIB:
+        return f"${{KIPRJMOD}}/symbols/{SYMLIB}.kicad_sym"
+    return f"${{KICAD9_SYMBOL_DIR}}/{name}.kicad_sym"
+
+
 def write_project():
     """The .kicad_pro plus the two library tables, so the schematic resolves
     its libraries without any global configuration."""
@@ -325,7 +472,7 @@ def write_project():
     open(os.path.join(ROOT, "sym-lib-table"), "w").write(
         "(sym_lib_table\n\t(version 7)\n" + "".join(
             f'\t(lib (name "{n}")(type "KiCad")'
-            f'(uri "${{KICAD9_SYMBOL_DIR}}/{n}.kicad_sym")(options "")(descr ""))\n'
+            f'(uri "{sym_uri(n)}")(options "")(descr ""))\n'
             for n in syms) + ")\n")
     open(os.path.join(ROOT, "fp-lib-table"), "w").write(
         "(fp_lib_table\n\t(version 7)\n" + "".join(
@@ -337,6 +484,7 @@ def write_project():
 
 
 if __name__ == "__main__":
+    write_symbol_lib()          # build() reads it back, like a stock library
     text = build()
     path = os.path.join(ROOT, PROJECT + ".kicad_sch")
     open(path, "w").write(text)

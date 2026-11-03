@@ -77,8 +77,9 @@ What the fix changes in `tools/gen_pcb.py`:
 end. Looking at the board from the top with the USB-C connector up: **J1
 (x = 130 mm) is the module's left column, D0…D6** top to bottom, nearest the
 mains section, and **J2 (x = 145.24 mm) is its right column — 5V, GND, 3V3,
-D10, D9, D8, D7** (Seeed's front pinout diagram, and the schematic's `val`
-fields say the same). The two pins that matter are on J1: **pad 2 = D1/GPIO3 =
+D10, D9, D8, D7** (Seeed's front pinout diagram). The schematic says the same
+thing in the symbol itself now, not only in a `val` field — see "The socket
+symbol" below. The two pins that matter are on J1: **pad 2 = D1/GPIO3 =
 `GATE_DRV`** (the triac trigger) and **pad 3 = D2/GPIO4 = `ZCD_OUT`**
 (zero-cross). Both would have gone to the wrong pin / the wrong end had a row
 been reversed, which is now a gate failure.
@@ -90,6 +91,76 @@ outline) instead of the 7.5 mm two loose sockets used. The card expected the
 but this is a **new routing**, not the old one carried over: 487 track segments
 instead of 491, so 16/16 nets and 0 errors / 0 warnings are re-measured claims
 (see "How the last two nets were closed" for the retry that was needed).
+
+## The socket symbol (the same defect, one layer up)
+
+`J1`/`J2` were generic `Conn_01x07` symbols as well, so the *schematic* said
+`Pin_2` where the board meant `D1`, and the only thing joining the two was a
+comment — the same shape of defect as the rows 6.1 mm apart: every tool
+passed, and a reviewer had to take the pinout on trust. ERC cannot see it
+either; a renamed pin moves no net.
+
+Each row now has its own symbol whose 7 pins carry the module's own names:
+`D0..D6` on J1, `VBUS, GND, 3V3_OUT, D10, D9/BOOT, D8, D7` on J2, pin 1 at the
+USB-C end on both. The exported netlist carries them
+(`(node (ref "J1") (pin "2") (pinfunction "D1") ...)`), and
+`tools/check_netlist.py` asserts all 14 against `gen_sch.XIAO_ROWS`.
+`tools/tests/test_pin_names.py` breaks that three ways and requires the report:
+a pin renamed (nothing else in the pipeline notices), the rows put back to
+`Pin_1..Pin_7`, and a row renumbered (both this check and the net membership
+check fire).
+
+**Where the symbol lives.** `symbols/xiao-ac.kicad_sym`, written by
+`gen_sch.py` from `XIAO_ROWS` and read back through `kicadlib` exactly like a
+stock library — so the file and the copy the schematic caches in `lib_symbols`
+are the one definition. `sym-lib-table` points at it through `${KIPRJMOD}`,
+`tools/ci.sh` hashes it together with the schematic (a stale copy fails the
+gate), and ERC's "library symbol issues" check compares cache against library
+as a second line of defence.
+
+**Why not Seeed's own symbol?** They publish one for the C3 in
+`OPL_Kicad_Library`, and it is the *SMD* variant: 22 pins — the 14 side pins
+plus 8 castellated pads (`EN`, `VBAT`, `MTDI/MTDO/MTMS/MTCK`) — numbered 1..14
+continuously across the two columns, ascending from the far end on the second
+one. This board carries the module's *DIP* socket: 14 holes, two `1x07`
+footprints each numbered 1..7 with pin 1 at the USB-C end. Their symbol would
+put eight pins in the netlist with no hole to go into and renumber both rows;
+and their DIP symbols (RP2350, nRF54LM20A) number the columns the same 1..14
+way, so there is no per-row-numbered 14-pin symbol to borrow. The **names** are
+theirs; the symbol is this project's.
+
+The mapping, for anyone who has to convert between the two numberings. The
+module's own numbers are Seeed's: the D0..D6 column is 1..7 from the USB-C end,
+the other column is 14..8 from that end — which is what both their DIP and SMD
+footprints for the C3 do, checked pad by pad against each other:
+
+| socket | module pin | name |
+| --- | --- | --- |
+| J1.1 | 1 | D0 |
+| J1.2 | 2 | D1 (GPIO3) — `GATE_DRV`, the triac trigger |
+| J1.3 | 3 | D2 (GPIO4) — `ZCD_OUT`, the zero-cross input |
+| J1.4 .. J1.7 | 4..7 | D3, D4, D5, D6 |
+| J2.1 | 14 | VBUS (the 5 V feed) |
+| J2.2 | 13 | GND |
+| J2.3 | 12 | 3V3_OUT |
+| J2.4 | 11 | D10 |
+| J2.5 | 10 | D9/BOOT |
+| J2.6 | 9 | D8 |
+| J2.7 | 8 | D7 |
+
+The symbol is drawn to the module's geometry where that is meaningful: 2.54 mm
+pin pitch (Seeed's symbol spreads the same 7 pins over 3.81 mm to buy label
+room) and a body as long as the module — 20.955 mm, i.e. 2.921 mm past pin 1
+and 2.794 mm past pin 7, the overhangs `gen_pcb.XIAO` measures the courtyard
+with — with the pin-1 end marked `USB-C end` at the top of both. It is 10.16 mm
+*across*, which is not the module's 17.8 mm: the symbol is one row of holes,
+not the module, and the description property says so.
+
+**The board did not change.** Regenerated and compared item by item against the
+committed board: 24 footprints, 500 copper items, 5 drawings, one group —
+identical apart from J1/J2's value field, which now names the module
+(`XIAO-ESP32C3 left D0..D6`). 16/16 nets routed, DRC 0 errors / 0 warnings,
+ERC 0 violations.
 
 ## Mounting holes
 

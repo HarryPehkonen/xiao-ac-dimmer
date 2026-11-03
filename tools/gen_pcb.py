@@ -141,10 +141,11 @@ MOUNTING = [
 #        row_sep to its right
 #   pin 1 of BOTH rows is at the top (y = pin1_y), i.e. at the USB-C end.
 #
-# That is the way round the schematic already reads: J1.2 = D1 (GPIO3, the
-# triac trigger) and J1.3 = D2 (GPIO4, the zero-cross input) are the second and
-# third pins down from the USB-C end.  Rotate either row by 180 deg and the
-# board fires the wrong pin -- silently, because the nets are still correct.
+# That is the way round the schematic reads -- in the symbol itself, now, not
+# in a comment: J1.2 is named D1 (GPIO3, the triac trigger) and J1.3 is named
+# D2 (GPIO4, the zero-cross input), the second and third pins down from the
+# USB-C end.  Rotate either row by 180 deg and the board fires the wrong pin
+# -- silently, because the nets are still correct.
 XIAO = {
     "row1_x": 130.0,          # mm, J1's pad column (the module's left column)
     "pin1_y": 13.0,           # mm, pad 1 of each row = the USB-C end

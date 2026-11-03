@@ -25,13 +25,17 @@ a generated one can (see Gates).
 ```
 
 1. **Generator == committed file.** Regenerating leaves `xiao-ac-dimmer.kicad_sch`
-   byte-identical, so the committed schematic is never stale.
+   and `symbols/xiao-ac.kicad_sym` byte-identical, so neither the committed
+   schematic nor the symbol library it draws `J1`/`J2` from is ever stale.
 2. **Netlist == intent.** `tools/check_netlist.py` exports a netlist with
    `kicad-cli` and asserts it against the intended netlist: every net present
    with exactly the intended pins, no unintended net at all (that would be a
-   short), and only the deliberately open pins reported unconnected. This gate
-   caught a rotated-symbol pin swap that would have fitted the Schottky diode
-   backwards.
+   short), only the deliberately open pins reported unconnected, and every pin
+   of the two XIAO socket rows carrying the *module's* pin name — `D0..D6` on
+   `J1`, `VBUS, GND, 3V3_OUT, D10, D9/BOOT, D8, D7` on `J2` — so the schematic
+   and its netlist say which pin is which instead of leaving it to a comment.
+   This gate caught a rotated-symbol pin swap that would have fitted the
+   Schottky diode backwards.
 3. **ERC clean.** `kicad-cli sch erc` reports 0 violations.
 
 ## Circuit in one paragraph
@@ -63,7 +67,7 @@ Part-by-part reasoning, including what is deliberately *not* proven: DESIGN.md.
 | C1 | 470 µF 16 V | 5 V bulk |
 | C2 | 100 nF | XIAO decoupling |
 | CS1 | 100 nF 400 V film | snubber |
-| J1, J2 | 2 × 1×07 2.54 mm socket | XIAO |
+| J1, J2 | 2 × 1×07 2.54 mm socket | XIAO: J1 = D0..D6, J2 = 5V..D7 |
 | J3, J4 | 2-pole 5.08 mm screw terminal | cord in / lamp out |
 
 ## Safety — read before powering anything up
@@ -86,10 +90,11 @@ Part-by-part reasoning, including what is deliberately *not* proven: DESIGN.md.
 ```
 xiao-ac-dimmer.kicad_sch   generated schematic (the reviewable design)
 xiao-ac-dimmer.kicad_pro   project + netclass settings
+symbols/xiao-ac.kicad_sym  the socket rows' symbols, pins named D0..D6 / VBUS..D7
 sym-lib-table fp-lib-table so the libraries resolve without global config
 tools/kicadlib.py          s-expression reader, symbol flattening (extends)
 tools/gen_sch.py           the circuit + schematic generator
-tools/check_netlist.py     gate: exported netlist == intended netlist
+tools/check_netlist.py     gate: exported netlist == intended netlist (and pin names)
 tools/ci.sh                the gate
 tools/probe_libs.py        diagnostic: does each embedded symbol load?
 sim/                       ngspice decks and measured results

@@ -15,6 +15,22 @@ import re
 import sys
 
 SYMDIR = "/usr/share/kicad/symbols"
+# A project may carry its own symbols instead of adding them to KiCad's global
+# tables: `symbols/<lib>.kicad_sym` beside the schematic, i.e. what a
+# sym-lib-table entry points at with ${KIPRJMOD}.  Resolve those too, so
+# flatten() works for a project library exactly as it does for a stock one.
+LOCALDIR = os.path.join(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))), "symbols")
+
+
+def lib_file(name):
+    """Path of the .kicad_sym that defines Lib:Symbol (stock, then local)."""
+    lib = name.split(":", 1)[0]
+    for d in (SYMDIR, LOCALDIR):
+        path = os.path.join(d, lib + ".kicad_sym")
+        if os.path.exists(path):
+            return path
+    raise KeyError(f"no {lib}.kicad_sym in {SYMDIR} or {LOCALDIR}")
 
 
 def parse(text):
@@ -83,7 +99,7 @@ def unquote(tok):
 def load_symbol(name):
     """Return (node, raw_text) for Lib:Symbol from the installed libraries."""
     lib, sym = name.split(":", 1)
-    path = os.path.join(SYMDIR, lib + ".kicad_sym")
+    path = lib_file(name)
     text = open(path, encoding="utf-8", errors="replace").read()
     for node in kids(parse(text)[0], "symbol"):
         if unquote(node[1]) == sym:
