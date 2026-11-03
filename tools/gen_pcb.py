@@ -74,9 +74,13 @@ MARGIN = 2.5          # mm between packed parts
 # The 20 parts span 41.9 mm (first row top at y = 9, deepest part at y = 50.9).
 # 57 mm keeps the 9 mm the top mounting holes need above the first row and
 # leaves 6.1 mm below the last one -- 15% spare on that side, inside Harri's
-# 10-20% tolerance.  150 x 57 mm = 85.5 cm2, down from 150 x 95 mm = 142.9 cm2.
-# The measured floor for this part list is 55 mm (still 16/16, still DRC
-# clean); 57 stays clear of it rather than spending a reroute defending 2 mm.
+# 10-20% tolerance.  150 x 57 mm = 85.5 cm2, down from 150 x 95 mm = 142.5 cm2.
+# The measured floor for this part list is 52 mm (still 16/16, still DRC clean);
+# 51 mm makes route.py raise IndexError instead of reporting "no path" (a pad's
+# escape spoke walks off the grid -- a router robustness bug, not a design
+# limit).  57 stays clear of all that rather than spending a reroute defending
+# 5 mm.  At 57 mm the router lays the *same* copper as at 95 mm, item for item,
+# so nothing was actually rerouted.
 BOARD_W, BOARD_H = 150.0, 57.0
 
 # ---------------------------------------------------------------- mounting --

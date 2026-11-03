@@ -49,7 +49,10 @@ Two things fell out of adding them:
 
 ## Board size
 
-**150 × 57 mm = 85.5 cm²**, down from **150 × 95 mm = 142.5 cm²**.
+**150 × 57 mm = 85.5 cm²**, down from **150 × 95 mm = 142.5 cm²**. (The
+150.2 × 95.2 mm / 142.9 cm² in the original report is the same board measured
+including the outline's own 0.15 mm line width, which is what a viewer draws;
+the segment endpoints give 150 × 95 mm.)
 
 The 20 parts span 41.9 mm vertically (y 9 → 50.9 mm) and 135.7 mm horizontally,
 so the 95 mm board was carrying a **54.3 mm band of empty board along the bottom
@@ -64,11 +67,19 @@ carries the reasoning):
 - **Height 57 mm.** 9 mm above the first row (the top mounting holes' courtyard
   needs it), 41.9 mm of parts, 6.1 mm below the last row — **15% spare on the
   bottom side**, inside the 10-20% tolerance, rather than the 130% it was.
-- **The floor is 55 mm.** Shrinking removes the router's spare corridors, so the
-  smaller board is a *new* routing claim: 55, 56, 57 and 58 mm were each
-  regenerated end-to-end and each reported 16/16 nets with 0 DRC errors and
-  0 warnings. 57 is used rather than 55 — two spare millimetres is not worth a
-  reroute, and 55 would be chasing the minimum.
+- **The floor is 52 mm.** Shrinking removes the router's spare corridors, so the
+  smaller board is a *new* routing claim, not an inherited one: 52, 53, 54, 55,
+  56, 57 and 58 mm were each regenerated end-to-end and each reported 16/16 nets
+  routed with 0 DRC errors and 0 warnings. 51 mm is where it stops, and it stops
+  badly — `tools/route.py` raises `IndexError: bytearray index out of range`
+  from `_open()`, i.e. a pad's escape spoke walks off the bottom of the grid
+  instead of the router reporting "no path". That is a router robustness bug,
+  not a design limit, and it sits 6 mm below the outline chosen here.
+- **Nothing had to be rerouted.** At 57 mm the router lays the *same* 506 copper
+  items as at 95 mm — compared item by item (net, layer, width, both endpoints):
+  identical. Only the outline and the two lower mounting holes moved. So the
+  smaller board is not a routing gamble that happened to pass; it carries the
+  routing that was already gated.
 - **Unchanged at the new height:** the mounting holes (5 mm inset, 3.2 mm NPTH,
   isolated, 6 mm copper-free disc) and their keepouts — `check_board.py` measures
   them on the finished board, not on the design table — and the packing strips,
