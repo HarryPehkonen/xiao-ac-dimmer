@@ -31,36 +31,53 @@ def mm(v):
 
 
 # ---------------------------------------------------------------- placement --
-# Board is 150 x 95 mm in five vertical strips.  Mains lives on the left;
+# Board is 150 x 57 mm in five vertical strips.  Mains lives on the left;
 # PS1, U2 and U1 straddle the middle strip because their own creepage is the
 # barrier; logic sits on the right.  Parts are *packed* inside their strip
 # (row by row, no overlaps by construction) rather than hand-placed, so the
 # same script keeps working when the part list changes.
 #
-# The strips stop short of the board edge at the top and bottom: the four
-# mounting holes sit 5 mm in from the corners and their courtyards reach
-# 3.45 mm back (see MOUNTING below), so the packing starts at y = 9 instead of
-# y = 6.  Placement never collides with a hole, and DRC says so.
+# A strip is (x0, y0, x1): packing starts at y0 and wraps to a new row once it
+# would cross x1.  Rows run downwards until the part list is exhausted, so the
+# board height is sized around the packed result (see BOARD_H) instead of the
+# packing being fenced in by a height chosen first.
+#
+# Packing starts at y = 9 rather than y = 6: the four mounting holes sit 5 mm in
+# from the top corners and their courtyards reach 3.45 mm back (see MOUNTING
+# below), so the first row has to clear them.  Placement never collides with a
+# hole, and DRC says so.
 GROUPS = [
     # mains: cord in -> fuse -> protection -> snubber -> cord out, then the
     # triac last so its gate ends up beside the gate resistor's own zone
-    ((4, 9, 50, 86), [("J3", 0), ("F1", 0), ("MOV1", 0), ("RS1", 0),
-                      ("CS1", 0), ("J4", 0), ("Q1", 0)]),
+    ((4, 9, 50), [("J3", 0), ("F1", 0), ("MOV1", 0), ("RS1", 0),
+                  ("CS1", 0), ("J4", 0), ("Q1", 0)]),
     # the mains-side resistors, in their own strip against the barrier: R4 is
     # the triac gate resistor (U2 pin 4 -> Q1 gate), R1/R2 are the zero-cross
     # legs into U1 pins 1/2.  Packing them in with the mains parts is what
     # walled the gate cluster in.
-    ((52, 9, 58, 86), [("R4", 90), ("R1", 90), ("R2", 90)]),
+    ((52, 9, 58), [("R4", 90), ("R1", 90), ("R2", 90)]),
     # parts that straddle the barrier, U2 first so its logic pins face the
     # logic-side cluster and its mains pins face the resistor strip
-    ((62, 9, 96, 86), [("U2", 180), ("U1", 180), ("PS1", 0)]),
+    ((62, 9, 96), [("U2", 180), ("U1", 180), ("PS1", 0)]),
     # logic-side resistors and the 5 V rail, right of the barrier
-    ((100, 9, 126, 86), [("R3", 90), ("R5", 0), ("D5", 0), ("C1", 0),
-                         ("C2", 0)]),
-    ((130, 9, 147, 86), [("J1", 0), ("J2", 0)]),
+    ((100, 9, 126), [("R3", 90), ("R5", 0), ("D5", 0), ("C1", 0),
+                     ("C2", 0)]),
+    ((130, 9, 147), [("J1", 0), ("J2", 0)]),
 ]
 MARGIN = 2.5          # mm between packed parts
-BOARD_W, BOARD_H = 150.0, 95.0
+# The outline is sized to the packed parts, not chosen up front -- which is the
+# mistake this board made once: 95 mm was bought while the router was failing,
+# and it stayed after the router was fixed, because nothing in the pipeline
+# flags a board bigger than its contents (the outline is an input, not a
+# result).
+#
+# The 20 parts span 41.9 mm (first row top at y = 9, deepest part at y = 50.9).
+# 57 mm keeps the 9 mm the top mounting holes need above the first row and
+# leaves 6.1 mm below the last one -- 15% spare on that side, inside Harri's
+# 10-20% tolerance.  150 x 57 mm = 85.5 cm2, down from 150 x 95 mm = 142.9 cm2.
+# The measured floor for this part list is 55 mm (still 16/16, still DRC
+# clean); 57 stays clear of it rather than spending a reroute defending 2 mm.
+BOARD_W, BOARD_H = 150.0, 57.0
 
 # ---------------------------------------------------------------- mounting --
 # Four M3 clearance holes, one per corner, 5 mm in from both edges.  The
@@ -84,7 +101,7 @@ def place_all(fps):
     """Pack each group's parts into rows inside its zone.  Returns
     {ref: (x, y, rot)} for reporting."""
     out = {}
-    for (x0, y0, x1, y1), parts in GROUPS:
+    for (x0, y0, x1), parts in GROUPS:
         cx, cy, rowh = x0, y0, 0.0
         for ref, rot in parts:
             fp = fps[ref]

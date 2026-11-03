@@ -5,7 +5,8 @@ same 14-pad footprint). Mains cord in one end, lamp socket out the other, and th
 triac dims whatever is plugged in between them. Plug-in bench/room scale — not
 house wiring.
 
-**Status: schematic complete and machine-checked. PCB layout is the next slice.**
+**Status: generated schematic and PCB, both machine-checked. The board is
+150 × 57 mm (85.5 cm²), 16/16 nets routed, DRC clean — 0 errors, 0 warnings.**
 
 ## The schematic is generated
 

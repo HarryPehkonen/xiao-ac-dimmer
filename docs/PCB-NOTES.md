@@ -7,8 +7,10 @@ with the schematic about connectivity.
 
 ## What works
 
-- 24 footprints on a 150 × 95 mm outline: 20 parts placed by the zone packer
+- 24 footprints on a 150 × 57 mm outline: 20 parts placed by the zone packer
   (mains / barrier / logic) plus the 4 M3 mounting holes. No courtyard overlaps.
+  The outline is sized to the packed parts (they span 41.9 mm; the old 95 mm
+  board was 40% dead space along one edge) — see "Board size" below.
 - 16 nets assigned from `kicad-cli sch export netlist`, and **16/16 routed**
   (491 track segments, 15 vias).
 - `xiao-ac-dimmer.kicad_dru` carries the isolation barrier as a machine-checked
@@ -41,9 +43,36 @@ Two things fell out of adding them:
    `MOUNT_BLOCK_R` is the spec radius plus half the widest track plus the
    half-cell diagonal.
 2. **The corner courtyards forced placement in.** Each hole's courtyard reaches
-   3.45 mm back from its centre, so the packing strips now start 9 mm from the
-   top edge and stop 9 mm from the bottom instead of hugging the outline. Not
-   one net lost its path: still 16/16, still 0 errors and 0 warnings.
+   3.45 mm back from its centre, so the packing strips start 9 mm from the top
+   edge instead of hugging the outline. Not one net lost its path: still 16/16,
+   still 0 errors and 0 warnings.
+
+## Board size
+
+**150 × 57 mm = 85.5 cm²**, down from **150 × 95 mm = 142.5 cm²**.
+
+The 20 parts span 41.9 mm vertically (y 9 → 50.9 mm) and 135.7 mm horizontally,
+so the 95 mm board was carrying a **54.3 mm band of empty board along the bottom
+edge** — the outline had been raised from 90 mm to 95 mm *while the router was
+failing*, and it stayed after the router was fixed. Nothing flagged it, because
+the outline is an input to the pipeline, not a result of it.
+
+The height is now sized around the packed parts (`BOARD_H` in `tools/gen_pcb.py`
+carries the reasoning):
+
+- **Width stays 150 mm.** The parts span 135.7 mm, already ~10% over.
+- **Height 57 mm.** 9 mm above the first row (the top mounting holes' courtyard
+  needs it), 41.9 mm of parts, 6.1 mm below the last row — **15% spare on the
+  bottom side**, inside the 10-20% tolerance, rather than the 130% it was.
+- **The floor is 55 mm.** Shrinking removes the router's spare corridors, so the
+  smaller board is a *new* routing claim: 55, 56, 57 and 58 mm were each
+  regenerated end-to-end and each reported 16/16 nets with 0 DRC errors and
+  0 warnings. 57 is used rather than 55 — two spare millimetres is not worth a
+  reroute, and 55 would be chasing the minimum.
+- **Unchanged at the new height:** the mounting holes (5 mm inset, 3.2 mm NPTH,
+  isolated, 6 mm copper-free disc) and their keepouts — `check_board.py` measures
+  them on the finished board, not on the design table — and the packing strips,
+  which are bounded in x only and simply run as deep as the parts do.
 
 ## How the last two nets were closed
 

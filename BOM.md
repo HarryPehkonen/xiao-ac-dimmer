@@ -90,9 +90,25 @@ They are in the generated board, not a drawing note:
   drill, NPTH, isolation and copper clearance — so a later re-route cannot
   quietly put copper back under a screw.
 - The corner keepouts changed the corridors, and the holes' courtyards own the
-  outer 3.45mm of each corner, so the packing strips now start 9mm from the top
-  and stop 9mm from the bottom instead of hugging the edges. The router still
-  gets **16/16 nets** with 0 DRC errors and 0 warnings.
+  outer 3.45mm of each corner, so the packing strips start 9mm from the top
+  instead of hugging the edge. The router still gets **16/16 nets** with 0 DRC
+  errors and 0 warnings.
+
+## Mechanical — board outline
+
+**150 × 57mm (85.5cm²)**, down from 150 × 95mm (142.5cm²). The 20 parts span
+41.9mm top to bottom (y 9 → 50.9mm), so the old 95mm left a **54mm dead band
+along the bottom edge** — a third of the board. The height had been raised from
+90mm to 95mm *while the router was failing*, and it stayed after the router was
+fixed, because nothing measures the outline: it is an input to the pipeline, not
+a result.
+
+The height is now sized to the packed parts instead of chosen first (see
+`BOARD_H` in `tools/gen_pcb.py`). 57mm keeps the 9mm the top mounting holes need
+above the first row and leaves 6.1mm below the last — **15% spare on the bottom
+side**, inside the 10-20% tolerance. The mounting holes are unaffected: still
+5mm inset, 3.2mm NPTH, 6mm copper-free disc, which `check_board.py` re-measures
+on the finished board at the new height.
 
 ## Mechanical — thermal
 
