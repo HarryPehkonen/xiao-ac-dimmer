@@ -108,7 +108,9 @@ USB-C end on both. The exported netlist carries them
 `tools/tests/test_pin_names.py` breaks that three ways and requires the report:
 a pin renamed (nothing else in the pipeline notices), the rows put back to
 `Pin_1..Pin_7`, and a row renumbered (both this check and the net membership
-check fire).
+check fire). Each case calls the netlist gate on a *doctored copy* of the
+schematic on purpose: `ci.sh`'s first check regenerates the committed file, so
+a hand-edit there is caught as staleness before the netlist gate sees it.
 
 **Where the symbol lives.** `symbols/xiao-ac.kicad_sym`, written by
 `gen_sch.py` from `XIAO_ROWS` and read back through `kicadlib` exactly like a

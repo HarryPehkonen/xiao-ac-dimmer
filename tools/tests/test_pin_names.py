@@ -7,10 +7,13 @@ pinout, and `check_netlist.py` asserts the names reach the netlist -- an
 assertion nobody should trust until it has been seen to fail.
 
 Each case below edits the *committed* schematic into a temp copy and requires
-the gate to report it.  The first one is the point of the whole change: a pin
-renamed in the schematic is invisible to ERC and to the netlist's connectivity
-(no net moves), so without this check the schematic could go back to lying
-about which pin is which and every gate would still pass.
+the gate to report it.  It has to be a copy: `ci.sh` regenerates the committed
+schematic in its first check, so a hand-edit there is caught as "stale" before
+the netlist gate ever runs -- these call `check_netlist.run()` on the doctored
+file directly.  The first case is the point of the whole change: a pin renamed
+in the schematic is invisible to ERC and to the netlist's connectivity (no net
+moves), so without this check the schematic could go back to lying about which
+pin is which and every gate would still pass.
 """
 import os
 import sys
