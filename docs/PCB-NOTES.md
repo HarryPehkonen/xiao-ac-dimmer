@@ -1,4 +1,4 @@
-# PCB status — partial, and honest about it
+# PCB status
 
 The board is **generated**, not drawn: `tools/gen_pcb.py` places the parts,
 `tools/route.py` routes them, `tools/check_board.py` gates the result.
@@ -9,49 +9,58 @@ with the schematic about connectivity.
 
 - 20 footprints placed by zone packer (mains / barrier / logic) on a
   150 × 95 mm outline. No courtyard overlaps.
-- 16 nets assigned from `kicad-cli sch export netlist`.
+- 16 nets assigned from `kicad-cli sch export netlist`, and **16/16 routed**
+  (489 track segments, 15 vias).
 - `xiao-ac-dimmer.kicad_dru` carries the isolation barrier as a machine-checked
   rule: **3 mm clearance between mains nets and everything else**, 1 mm minimum
   mains track width.
-- DRC: **no shorts, no clearance violations** where copper exists — the 3 mm
-  barrier rule is satisfied. Mains tracks are 1.5 mm wide on both layers.
+- DRC: **0 errors, 0 warnings** — no shorts, no clearance violations, no
+  `hole_to_hole`, no silk overlaps. The 3 mm barrier rule is satisfied. Mains
+  tracks are 1.5 mm wide on both layers.
+- `check_board.py` is wired into `tools/ci.sh`, so a board that stops routing
+  or gains a violation fails the same gate as a stale schematic.
 
-## What does not work yet
+## How the last two nets were closed
 
-- **2 of 16 nets are unrouted**: `LOAD_L` (J4 → Q1 pin 2) and `ZCD_OUT`
-  (R5 → U1 pin 5). Both targets are pads inside a 2.54 mm pin column, where the
-  pad's own neighbours veto most of its opening (measured: 19–22 of 49 cells)
-  and the survivors do not reach open space on either layer. DRC reports 3
-  `unconnected_items` errors. `TRIAC_G`, `MOC_MT2` and `MOC_A` failed here too
-  and now route.
-- 2 `hole_to_hole` warnings from vias landing near pads; 1 `silk_overlap`
-  warning that `AutoPlaceFields()` did not clear.
-- Routing quality: segments merged into single runs (**410**, down from 2,161 —
-  one track per 0.5 mm grid step was pure bloat). No shorts, no clearance
-  violations.
+`LOAD_L` (J4.1 → Q1.2) and `ZCD_OUT` (R5.2 → U1.5) both land on pads buried in
+a 2.54 mm pin column. The pads' own neighbours veto most of each opening
+(measured 22 and 19 of 49 cells), and by the time those two nets were reached
+earlier routes had walled the survivors in on the layers that mattered.
+Two changes, neither touching a clearance constant:
+
+1. **Route the most constrained pad first.** `route()` used to order nets by
+   length, which let a long net seal the very pad it had to reach. The order is
+   now by the static free-cell count of each net's tightest pad
+   (`_free_score`), descending, so a pad with almost no room is claimed before
+   the copper that would close it exists.
+2. **De-overlap the silkscreen fields.** `AutoPlaceFields()` left J4's
+   reference sitting on MOV1's, the last DRC warning. `deoverlap_fields()` in
+   `gen_pcb.py` slides any visible reference/value field down until its
+   bounding box is clear.
+
+The router's per-pad escape spoke was also extracted into the pure function
+`_escape_dirs()` (perpendicular to the nearest neighbour) so its geometry is
+unit-tested.
+
+## Routing quality
+
+- Segments merged into single runs (`_to_segments`), not one track per 0.5 mm
+  grid step: 489 segments instead of 2,161 — no file bloat, fast DRC, a board
+  that can be read.
 - The router's clearance floor is **measured, not guessed**: at 0.25 mm margin
   DRC reported 12 shorts against `no-net` pads (a diagonal run passes ~0.4 mm
   closer to a pad than the cell-centre model predicts); 0.5 mm gave none; 0.4 mm
   is the floor that still lets dense pin columns route.
 
-**This board is not fab-ready and must not be ordered.** `check_board.py` is
-deliberately NOT part of `tools/ci.sh` while it fails — wiring a failing gate
-into CI teaches you to ignore CI.
+## Next steps
 
-## Next steps, in order
-
-1. Get `LOAD_L` and `ZCD_OUT` home. Both are pads buried in a pin column, so the
-   options are: widen those pads' openings (open a short channel along the pin
-   row, not just perpendicular to it), or route those two from explicit
-   coordinates. Placement is no longer the constraint — the pads are reachable,
-   the opening is what fails.
-2. Clear the 2 `hole_to_hole` and 1 `silk_overlap` warnings.
-3. Then, and only then: gerbers + drill export, a gerber-viewer eyeball, and the
-   DFM check with the fab's rules. Wire `check_board.py` into `tools/ci.sh` on
-   the same commit that makes it pass.
+1. Gerbers + drill export, a gerber-viewer eyeball, and the DFM check with the
+   fab's rules.
+2. Schematic parity (`kicad-cli pcb drc --schematic-parity`) in the board gate,
+   so a board/schematic drift is caught, not just netlist drift.
 
 ## Safety status (unchanged, and not affected by any of the above)
 
-DRC clean would still not be a safety certificate. The barrier is geometry the
-tool checks; the parts, the creepage standard, the enclosure, the GFCI test and
-the 500 V insulation test are what make it survivable. See DESIGN.md.
+DRC clean is still not a safety certificate. The barrier is geometry the tool
+checks; the parts, the creepage standard, the enclosure, the GFCI test and the
+500 V insulation test are what make it survivable. See DESIGN.md.

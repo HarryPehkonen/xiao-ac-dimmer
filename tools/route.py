@@ -178,6 +178,41 @@ def _to_segments(path):
     return segs
 
 
+def _free_score(board, net, all_pads):
+    """Free cells in a net's most constrained pad opening.
+
+    A pad buried in a 2.54 mm pin column has most of its opening vetoed by its
+    own neighbours, so the bare cell count says how much room the router will
+    have to escape.  The score is computed from the static pad geometry, before
+    any copper exists, so the order it produces does not depend on the routes
+    that happen to be chosen first.
+    """
+    pads = _pads(board, net)
+    if len(pads) < 2:
+        return 10 ** 9
+    mine = {(p.GetParentFootprint().GetReference(), p.GetNumber())
+            for p in pads}
+    worst = None
+    for p in pads:
+        mx, my = pcbnew.ToMM(p.GetPosition().x), pcbnew.ToMM(p.GetPosition().y)
+        cx0, cy0 = _c(mx), _c(my)
+        cr = _c(_pad_half(p) + CLEAR_NORMAL + WIDTH_SIGNAL / 2 + QUANT)
+        veto = [(pcbnew.ToMM(q.GetPosition().x), pcbnew.ToMM(q.GetPosition().y),
+                 _pad_half(q) + CLEAR_NORMAL + WIDTH_SIGNAL / 2 + QUANT)
+                for q, key in all_pads if key not in mine]
+        cnt = 0
+        for dx in range(-cr, cr + 1):
+            for dy in range(-cr, cr + 1):
+                if dx * dx + dy * dy > cr * cr:
+                    continue
+                mx2, my2 = _mm(cx0 + dx), _mm(cy0 + dy)
+                if not any((mx2 - vx) ** 2 + (my2 - vy) ** 2 <= vr * vr
+                           for vx, vy, vr in veto):
+                    cnt += 1
+        worst = cnt if worst is None else min(worst, cnt)
+    return worst
+
+
 def _diagnose(grid, pad, mine, all_pads, vetoes):
     """Why a pad cannot be reached: how its opening survives the vetoes.
 
@@ -212,6 +247,27 @@ def _diagnose(grid, pad, mine, all_pads, vetoes):
             f"free L0={free[0]}/L1={free[1]}")
 
 
+def _escape_dirs(mx, my, others, radius=4.0):
+    """Unit directions perpendicular to the nearest neighbouring pad.
+
+    A pad in a 2.54 mm pin row has most of its opening vetoed by its own
+    neighbours, so the router needs a channel *across* the row, not along it.
+    Given the pad centre and the positions of the other pads, return the two
+    opposite unit vectors perpendicular to the nearest one (or [] when nothing
+    is close enough).  Pure geometry, so it can be tested without a board.
+    """
+    near = None
+    for qx, qy in others:
+        ddx, ddy = qx - mx, qy - my
+        dist = (ddx * ddx + ddy * ddy) ** 0.5
+        if 0 < dist < radius and (near is None or dist < near[0]):
+            near = (dist, ddx / dist, ddy / dist)
+    if near is None:
+        return []
+    ux, uy = -near[2], near[1]              # rotate the neighbour vector 90 deg
+    return [(ux, uy), (-ux, -uy)]
+
+
 def _open(grid, pad, mine, all_pads, vetoes):
     """Make a net's own pad reachable without opening a hole over a neighbour.
 
@@ -230,15 +286,9 @@ def _open(grid, pad, mine, all_pads, vetoes):
     # has most of its opening vetoed by its own neighbours (measured: 21 of 49
     # cells, leaving a sliver that does not reach open space), so every pad
     # gets a channel out sideways.
-    near = None
-    for q, key in all_pads:
-        if key in mine:
-            continue
-        qx, qy = pcbnew.ToMM(q.GetPosition().x), pcbnew.ToMM(q.GetPosition().y)
-        ddx, ddy = qx - mx0, qy - my0
-        dist = (ddx * ddx + ddy * ddy) ** 0.5
-        if 0 < dist < 4.0 and (near is None or dist < near[0]):
-            near = (dist, ddx / dist, ddy / dist)
+    others = [(pcbnew.ToMM(q.GetPosition().x), pcbnew.ToMM(q.GetPosition().y))
+              for q, key in all_pads if key not in mine]
+    dirs = _escape_dirs(mx0, my0, others)
 
     for dx in range(-cr, cr + 1):
         for dy in range(-cr, cr + 1):
@@ -255,19 +305,17 @@ def _open(grid, pad, mine, all_pads, vetoes):
             if not any(v.is_blocked(cx, cy, 1) for v in vetoes):
                 grid.unblock(cx, cy, 1)
 
-    if near is not None:
-        ux, uy = -near[2], near[1]          # perpendicular to the neighbour
-        for sgn in (1, -1):
-            for k in range(1, cr + 2):
-                cx = cx0 + int(round(sgn * ux * k))
-                cy = cy0 + int(round(sgn * uy * k))
-                mx, my = _mm(cx), _mm(cy)
-                if any((mx - vx) ** 2 + (my - vy) ** 2 <= vr * vr
-                       for vx, vy, vr in veto):
-                    break                    # runs into another pad: stop
-                for l in (0, 1):
-                    if not any(v.is_blocked(cx, cy, l) for v in vetoes):
-                        grid.unblock(cx, cy, l)
+    for ux, uy in dirs:
+        for k in range(1, cr + 2):
+            cx = cx0 + int(round(ux * k))
+            cy = cy0 + int(round(uy * k))
+            mx, my = _mm(cx), _mm(cy)
+            if any((mx - vx) ** 2 + (my - vy) ** 2 <= vr * vr
+                   for vx, vy, vr in veto):
+                break                        # runs into another pad: stop
+            for l in (0, 1):
+                if not any(v.is_blocked(cx, cy, l) for v in vetoes):
+                    grid.unblock(cx, cy, l)
 
 
 def route(board, netitems, nets, verbose=True):
@@ -301,7 +349,14 @@ def route(board, netitems, nets, verbose=True):
                 best = d if best is None else min(best, d)
         return best
 
+    # Most constrained pad first.  Routing used to sort by net length alone,
+    # which let a long net wall in the very pad it needed to reach; sorting by
+    # the static free-cell count of each net's tightest pad removes that
+    # ordering hazard without touching the clearance constants.
+    _allpads = [(p, (fp.GetReference(), p.GetNumber()))
+                for fp in board.GetFootprints() for p in fp.Pads()]
     order = sorted(nets, key=lambda n: (n not in MAINS, len(nets[n]) > 2,
+                                        -_free_score(board, n, _allpads),
                                         span(n)))
     failed = {}
     routed = 0

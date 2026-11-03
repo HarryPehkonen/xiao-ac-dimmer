@@ -109,6 +109,31 @@ def schematic_nets():
     return nets
 
 
+def deoverlap_fields(fps, step=0.75, tries=40):
+    """Nudge visible silk text so no two reference/value fields overlap.
+
+    AutoPlaceFields() puts each part's reference somewhere near the part but
+    knows nothing about the neighbour it lands on, which is how J4's reference
+    ended up on MOV1's.  Walk the fields in reference order and slide each one
+    down until its bounding box is clear, giving up after a bounded number of
+    tries so a genuinely crowded area still terminates.
+    """
+    placed = []
+    for ref in sorted(fps):
+        fp = fps[ref]
+        fields = [f for f in (fp.Reference(), fp.Value())
+                  if f.IsVisible()
+                  and f.GetLayer() in (pcbnew.F_SilkS, pcbnew.B_SilkS)]
+        for f in fields:
+            bb = f.GetBoundingBox()
+            n = 0
+            while any(bb.Intersects(pb) for _r, pb in placed) and n < tries:
+                f.Move(pcbnew.VECTOR2I(0, pcbnew.FromMM(step)))
+                bb = f.GetBoundingBox()
+                n += 1
+            placed.append((ref, bb))
+
+
 def build():
     board = pcbnew.BOARD()
     board.SetFileName(BOARD)
@@ -139,6 +164,8 @@ def build():
             fp.AutoPlaceFields()          # keeps reference text off the
         except AttributeError:            # neighbouring part's silk
             pass
+    deoverlap_fields(fps)                 # ...and this catches what it misses
+    for ref, fp in fps.items():
         board.Add(fp)
         by_ref[ref] = fp
     if "--dump" in sys.argv or "-v" in sys.argv:

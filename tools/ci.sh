@@ -23,4 +23,7 @@ echo "== ERC"
 kicad-cli sch erc --severity-all --exit-code-violations \
     -o /dev/null xiao-ac-dimmer.kicad_sch
 
+echo "== board DRC"
+/usr/bin/python3 tools/check_board.py
+
 echo "OK"
