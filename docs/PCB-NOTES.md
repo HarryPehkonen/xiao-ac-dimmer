@@ -295,8 +295,8 @@ Nothing in it changes this board (DRC and `check_board.py` are clean with either
 version), so regenerating and then reverting the project file keeps the diff
 readable: `git checkout -- xiao-ac-dimmer.kicad_pro`.
 
-The schematic has a hash check (`tools/ci.sh` hashes it, regenerates, compares
-hashes).
+The schematic has a hash check (`tools/ci.sh` hashes it together with
+`symbols/xiao-ac.kicad_sym`, regenerates, compares hashes).
 The board cannot, and that is not a defect in the gate: KiCad gives every item a
 fresh UUID on each run and writes footprints in an order derived from those
 UUIDs, so two runs of the same generator never produce the same bytes. Two runs

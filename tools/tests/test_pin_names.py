@@ -69,25 +69,25 @@ def test_a_generic_row_fails_the_gate(tmp_path):
 
 
 def test_a_renumbered_row_fails_the_gate(tmp_path):
-    """Swap pins 3 and 4 of the right row: the numbers must not move silently.
+    """Swap pins 1 and 2 of the right row: the numbers must not move silently.
 
     check_board.py asserts the board's pads against gen_sch.PARTS, so the
     physical side of a renumbering is already covered; this is the
-    schematic/netlist side of the same rule.  Pin 3 is wired (+3V3) and pin 4
-    is a no-connect, so the net on J2.3 changes as well -- both checks fire.
+    schematic/netlist side of the same rule.  Both pins are wired (+5V_XIAO and
+    GND), so the nets move as well as the names -- both checks fire.
     """
     head, block, tail = row_block(open(SCH, encoding="utf-8").read(),
                                   "XIAO_ESP32C3_Right")
-    block = block.replace('(number "3"', "\x00").replace('(number "4"',
-                                                         '(number "3"')
-    block = block.replace("\x00", '(number "4"')
+    block = block.replace('(number "1"', "\x00").replace('(number "2"',
+                                                         '(number "1"')
+    block = block.replace("\x00", '(number "2"')
     path = os.path.join(str(tmp_path), "renumbered.kicad_sch")
     open(path, "w").write(head + block + tail)
     bad, lines = gate(path)
     assert bad > 0, lines
-    assert "PIN NAME    J2.3: the netlist says 'D10', the module's pin is " \
-        "'3V3_OUT'" in lines, lines
-    assert any(line.startswith("MISMATCH") and "+3V3" in line
+    assert "PIN NAME    J2.1: the netlist says 'GND', the module's pin is " \
+        "'VBUS'" in lines, lines
+    assert any(line.startswith("MISMATCH") and "+5V_XIAO" in line
                for line in lines), lines
 
 
