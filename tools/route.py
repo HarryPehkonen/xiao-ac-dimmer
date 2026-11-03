@@ -47,6 +47,18 @@ VIA_COST = 12                   # in cells, so vias are used deliberately
 QUANT = GRID * 0.71             # half a cell diagonal: blocking is per cell
                                 # centre, so every radius needs this much
                                 # slack or tracks clip pads between cells
+MOUNT_KEEPOUT_R = 3.0           # copper-free radius around a mounting hole.
+                                # gen_pcb.py specs a 6 mm copper-free disc
+                                # (MOUNT_KEEPOUT) because an M3 screw head sits
+                                # over the hole and must not find copper;
+                                # check_board.py measures the finished board
+                                # against that spec, so the two cannot drift.
+# The grid blocks cell *centres*, so a keepout has to be inflated by the widest
+# copper that could pass on it (mains half-width; a mains via is only 0.5 mm
+# radius) plus the half-cell diagonal, or a 1.5 mm mains track laid on the last
+# free cell still puts its edge 0.75 mm inside the disc.  Measured before this:
+# LOAD_L came within 2.86 mm of H1.
+MOUNT_BLOCK_R = MOUNT_KEEPOUT_R + WIDTH_MAINS / 2 + QUANT
 
 
 def _c(v):
@@ -153,6 +165,21 @@ def _pad_disc(pad, grid, layer, clear):
     p = pad.GetPosition()
     r = _pad_half(pad) + CLEAR_NORMAL + WIDTH_SIGNAL / 2 + QUANT
     grid.block_disc(pcbnew.ToMM(p.x), pcbnew.ToMM(p.y), r, layer, clear=clear)
+
+
+def _mounting_holes(board):
+    """Centres of this board's mounting holes, in mm.
+
+    Found on the board by footprint id, not from a table here: gen_pcb.py
+    placed the holes, and a second table would be a second source of truth for
+    something that already exists in exactly one place.
+    """
+    out = []
+    for fp in board.GetFootprints():
+        if str(fp.GetFPID().GetLibItemName()).startswith("MountingHole"):
+            p = fp.GetPosition()
+            out.append((pcbnew.ToMM(p.x), pcbnew.ToMM(p.y)))
+    return out
 
 
 def _to_segments(path):
@@ -335,6 +362,17 @@ def route(board, netitems, nets, verbose=True):
             _pad_disc(pad, g_sig, None, clear=False)
             _pad_disc(pad, g_mains, None, clear=False)
 
+    # A mounting hole is a keepout, not an obstacle to route around: an M3
+    # screw head sits over it, so no copper may come within MOUNT_KEEPOUT_R.
+    # Blocked on both occupancy grids *and* kept as a veto below, because
+    # _open() clears cells around a net's own pads and would otherwise punch a
+    # pad's escape spoke straight through the disc.
+    holes = _mounting_holes(board)
+    keepout = Grid()
+    for hx, hy in holes:
+        for g in (g_sig, g_mains, keepout):
+            g.block_disc(hx, hy, MOUNT_BLOCK_R)
+
     def span(n):
         """Shortest pad-to-pad hop in the net: short nets route first, while
         there is still room, instead of being walled in by the long ones."""
@@ -349,10 +387,15 @@ def route(board, netitems, nets, verbose=True):
                 best = d if best is None else min(best, d)
         return best
 
-    # Most constrained pad first.  Routing used to sort by net length alone,
-    # which let a long net wall in the very pad it needed to reach; sorting by
-    # the static free-cell count of each net's tightest pad removes that
-    # ordering hazard without touching the clearance constants.
+    # Sort by the static free-cell count of each net's tightest pad, most room
+    # first, ahead of the old length-only key: ordering a net late is what finds
+    # its pad already walled in, and this key removes that hazard without
+    # touching a clearance constant.
+    #
+    # Most-room-first, not most-constrained-first -- measured, not reasoned:
+    # flipping the sign to claim the tightest pad first leaves 14/16 nets with
+    # 6 DRC errors (MOC_A and ZCD_OUT lose their paths, four shorts appear), so
+    # the ordering that reads like the right advice is the one that fails.
     _allpads = [(p, (fp.GetReference(), p.GetNumber()))
                 for fp in board.GetFootprints() for p in fp.Pads()]
     order = sorted(nets, key=lambda n: (n not in MAINS, len(nets[n]) > 2,
@@ -392,7 +435,8 @@ def route(board, netitems, nets, verbose=True):
                 for p in pads}
         for pad in pads:
             _open(grid, pad, mine, all_pads,
-                  (cop_m2m, cop_s2m) if mains else (cop_m2s, cop_s2s))
+                  (cop_m2m, cop_s2m, keepout) if mains
+                  else (cop_m2s, cop_s2s, keepout))
 
         ok = True
         segs, vias = [], []
@@ -406,7 +450,8 @@ def route(board, netitems, nets, verbose=True):
             grid.unblock(g[0], g[1], None)
             path = astar(grid, s, g)
             if path is None:
-                vet = (cop_m2m, cop_s2m) if mains else (cop_m2s, cop_s2s)
+                vet = ((cop_m2m, cop_s2m, keepout) if mains
+                       else (cop_m2s, cop_s2s, keepout))
                 why = _diagnose(grid, pad, mine, all_pads, vet)
                 failed[net] = (f"no path {_ref(anchor)}.{anchor.GetNumber()}"
                                f" -> {_ref(pad)}.{pad.GetNumber()} [{why}]")
@@ -422,7 +467,13 @@ def route(board, netitems, nets, verbose=True):
                     via = pcbnew.PCB_VIA(board)
                     via.SetPosition(pcbnew.VECTOR2I(pcbnew.FromMM(_mm(cur[0])),
                                                     pcbnew.FromMM(_mm(cur[1]))))
-                    via.SetWidth(pcbnew.FromMM(0.8 if not mains else 1.0))
+                    # PCB_VIA::SetWidth() needs a layer in KiCad 9.  Without
+                    # one it sets the width but asserts on every single via
+                    # ("called without a layer argument"), and fifteen of those
+                    # bury the router's own report.
+                    via_w = pcbnew.FromMM(1.0 if mains else 0.8)
+                    via.SetWidth(pcbnew.F_Cu, via_w)
+                    via.SetWidth(pcbnew.B_Cu, via_w)
                     via.SetDrill(pcbnew.FromMM(0.4 if not mains else 0.5))
                     via.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu)
                     via.SetNet(netitems[net])

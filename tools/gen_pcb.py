@@ -31,31 +31,53 @@ def mm(v):
 
 
 # ---------------------------------------------------------------- placement --
-# Board is 130 x 90 mm in three vertical zones.  Mains lives on the left;
-# PS1, U2 and U1 straddle the middle zone because their own creepage is the
-# barrier; logic sits on the right.  Parts are *packed* inside their zone
+# Board is 150 x 95 mm in five vertical strips.  Mains lives on the left;
+# PS1, U2 and U1 straddle the middle strip because their own creepage is the
+# barrier; logic sits on the right.  Parts are *packed* inside their strip
 # (row by row, no overlaps by construction) rather than hand-placed, so the
 # same script keeps working when the part list changes.
+#
+# The strips stop short of the board edge at the top and bottom: the four
+# mounting holes sit 5 mm in from the corners and their courtyards reach
+# 3.45 mm back (see MOUNTING below), so the packing starts at y = 9 instead of
+# y = 6.  Placement never collides with a hole, and DRC says so.
 GROUPS = [
     # mains: cord in -> fuse -> protection -> snubber -> cord out, then the
     # triac last so its gate ends up beside the gate resistor's own zone
-    ((4, 6, 50, 90), [("J3", 0), ("F1", 0), ("MOV1", 0), ("RS1", 0),
+    ((4, 9, 50, 86), [("J3", 0), ("F1", 0), ("MOV1", 0), ("RS1", 0),
                       ("CS1", 0), ("J4", 0), ("Q1", 0)]),
     # the mains-side resistors, in their own strip against the barrier: R4 is
     # the triac gate resistor (U2 pin 4 -> Q1 gate), R1/R2 are the zero-cross
     # legs into U1 pins 1/2.  Packing them in with the mains parts is what
     # walled the gate cluster in.
-    ((52, 6, 58, 90), [("R4", 90), ("R1", 90), ("R2", 90)]),
+    ((52, 9, 58, 86), [("R4", 90), ("R1", 90), ("R2", 90)]),
     # parts that straddle the barrier, U2 first so its logic pins face the
     # logic-side cluster and its mains pins face the resistor strip
-    ((62, 6, 96, 90), [("U2", 180), ("U1", 180), ("PS1", 0)]),
+    ((62, 9, 96, 86), [("U2", 180), ("U1", 180), ("PS1", 0)]),
     # logic-side resistors and the 5 V rail, right of the barrier
-    ((100, 6, 126, 90), [("R3", 90), ("R5", 0), ("D5", 0), ("C1", 0),
+    ((100, 9, 126, 86), [("R3", 90), ("R5", 0), ("D5", 0), ("C1", 0),
                          ("C2", 0)]),
-    ((130, 6, 147, 90), [("J1", 0), ("J2", 0)]),
+    ((130, 9, 147, 86), [("J1", 0), ("J2", 0)]),
 ]
 MARGIN = 2.5          # mm between packed parts
 BOARD_W, BOARD_H = 150.0, 95.0
+
+# ---------------------------------------------------------------- mounting --
+# Four M3 clearance holes, one per corner, 5 mm in from both edges.  The
+# footprint is a plain non-plated 3.2 mm hole: no pad, no annular ring, no net,
+# so nothing is bonded and nothing sits under the screw head.  Nylon standoffs
+# only -- this is a two-wire appliance with no earth conductor, so a metal
+# standoff has nothing safe to be bonded to (see BOM.md).
+MOUNT_FP = "MountingHole:MountingHole_3.2mm_M3"
+MOUNT_INSET = 5.0             # mm from each board edge to the hole centre
+MOUNT_DRILL = 3.2             # mm finished hole, M3 clearance
+MOUNT_KEEPOUT = 6.0           # mm diameter of the copper-free disc around it
+MOUNTING = [
+    ("H1", MOUNT_INSET, MOUNT_INSET),
+    ("H2", BOARD_W - MOUNT_INSET, MOUNT_INSET),
+    ("H3", MOUNT_INSET, BOARD_H - MOUNT_INSET),
+    ("H4", BOARD_W - MOUNT_INSET, BOARD_H - MOUNT_INSET),
+]
 
 
 def place_all(fps):
@@ -134,6 +156,24 @@ def deoverlap_fields(fps, step=0.75, tries=40):
             placed.append((ref, bb))
 
 
+def load_footprint(spec):
+    """Load "Library:Name" from the system KiCad libraries.
+
+    FootprintLoad() hands back the bare footprint *name*, so the board used to
+    save as (footprint "R_Axial_..." with no library nickname.  The geometry is
+    embedded either way and fab is unaffected, but with no nickname "update
+    footprint from library" can never work -- and that is the whole workflow for
+    swapping a part on this board (a mounting hole, an IRM-03-5, ...).
+    """
+    lib, name = spec.split(":")
+    src = os.path.join("/usr/share/kicad/footprints", lib + ".pretty")
+    fp = pcbnew.FootprintLoad(src, name)
+    if fp is None:
+        raise SystemExit(f"cannot load footprint {spec}")
+    fp.SetFPID(pcbnew.LIB_ID(lib, name))
+    return fp
+
+
 def build():
     board = pcbnew.BOARD()
     board.SetFileName(BOARD)
@@ -150,11 +190,7 @@ def build():
     for part in gen_sch.PARTS:
         if not part["fp"]:
             continue
-        lib, name = part["fp"].split(":")
-        src = os.path.join("/usr/share/kicad/footprints", lib + ".pretty")
-        fp = pcbnew.FootprintLoad(src, name)
-        if fp is None:
-            raise SystemExit(f"cannot load footprint {part['fp']}")
+        fp = load_footprint(part["fp"])
         fp.SetReference(part["ref"])
         fp.SetValue(part["val"])
         fps[part["ref"]] = fp
@@ -181,6 +217,18 @@ def build():
             for p in fp.Pads():
                 if p.GetNumber() == pad:
                     p.SetNet(netitems[net])
+
+    # --- mounting holes ----------------------------------------------------
+    # Placed before routing, and on the board rather than kept in a table here,
+    # so the router finds them where they really are (route.py keeps a copper
+    # keepout around any MountingHole footprint it sees).
+    for ref, x, y in MOUNTING:
+        fp = load_footprint(MOUNT_FP)
+        fp.SetReference(ref)
+        fp.SetValue(MOUNT_FP.split(":")[1])
+        fp.SetPosition(pcbnew.VECTOR2I(MM(x), MM(y)))
+        board.Add(fp)
+        by_ref[ref] = fp
 
     # --- board outline -----------------------------------------------------
     for (x0, y0), (x1, y1) in zip(EDGE, EDGE[1:]):
@@ -238,4 +286,5 @@ if __name__ == "__main__":
         print(f"wrote {BOARD}")
         fp_count = len(list(pcbnew.LoadBoard(BOARD).GetFootprints()))
         print(f"  {fp_count} footprints, {len(schematic_nets())} nets, "
-              f"board outline 130 x 90 mm")
+              f"board outline {BOARD_W:g} x {BOARD_H:g} mm, "
+              f"{len(MOUNTING)} mounting holes")

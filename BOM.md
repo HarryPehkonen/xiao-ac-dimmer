@@ -68,19 +68,31 @@ better**. "400 V" is a DC rating; it is not the same claim.
 
 ## Mechanical — mounting
 
-The board has **no mounting holes yet**. Adding them is a small change to
-`tools/gen_pcb.py`, not a redesign:
+Four M3 clearance holes, one per corner, **5mm inset** from each board edge.
+They are in the generated board, not a drawing note:
 
-- 4 × M3 clearance holes (3.2mm drill) in the corners, **5mm inset** from the
-  board edge, each with a 6mm copper keepout so no net comes near the screw.
-- The mounting pads stay **isolated** — connected to no net, no copper ring
-  under the screw head.
+- **3.2mm drill**, non-plated (`MountingHole:MountingHole_3.2mm_M3`): no pad, no
+  annular ring, connected to no net, so nothing is bonded and no copper sits
+  under the screw head. They carry `exclude_from_bom` and
+  `exclude_from_pos_files`, so they do not show up as parts to place.
+- **6mm copper keepout** per hole — a 6mm-*diameter* copper-free disc, i.e. no
+  track, via or pad edge within 3mm of the hole centre. A socket-head M3 screw
+  is 5.5mm across, so the disc covers the head with a little margin. (Reading
+  the spec the other way, a 6mm *radius*, puts the disc off the board: a 5mm
+  inset hole would leave the outline.)
 - **Nylon standoffs, not metal.** This is a two-wire appliance with no earth
   conductor, so there is nothing for a metal standoff or a metal enclosure to be
   safely bonded to. Plastic standoffs and a plastic box avoid the question
   entirely.
-- Adding holes means re-running the router: the corner keepouts change the
-  available corridors. Cheap now that the gate is known-good.
+- Where it lives: `tools/gen_pcb.py` places them (`MOUNTING`, `MOUNT_INSET`,
+  `MOUNT_DRILL`, `MOUNT_KEEPOUT`), `tools/route.py` enforces the keepout on both
+  layers, and `tools/check_board.py` re-measures the finished board — inset,
+  drill, NPTH, isolation and copper clearance — so a later re-route cannot
+  quietly put copper back under a screw.
+- The corner keepouts changed the corridors, and the holes' courtyards own the
+  outer 3.45mm of each corner, so the packing strips now start 9mm from the top
+  and stop 9mm from the bottom instead of hugging the edges. The router still
+  gets **16/16 nets** with 0 DRC errors and 0 warnings.
 
 ## Mechanical — thermal
 
