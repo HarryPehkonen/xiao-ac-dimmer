@@ -94,6 +94,16 @@ class Grid:
             self.blocked[layer][self.idx(x, y)] = 1
 
     def is_blocked(self, x, y, layer):
+        # A cell that is not on the grid is not a cell this router may use, so
+        # it reads as blocked -- the same refusal block(), unblock() and
+        # inside() already make.  _open() walks a pad's opening disc and its
+        # escape spoke in cell coordinates and asks about every cell they land
+        # on, so without this a pad within cr cells of an edge indexes the
+        # bytearray off its end: IndexError from inside the router, where the
+        # contract is the router's own "no path <ref>.<pad> -> <ref>.<pad>
+        # [diagnosis]".
+        if not (0 <= x < self.nx and 0 <= y < self.ny):
+            return True
         return self.blocked[layer][self.idx(x, y)]
 
     def block_box(self, x0, y0, x1, y1, layer=None):

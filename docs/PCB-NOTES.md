@@ -70,11 +70,21 @@ carries the reasoning):
 - **The floor is 52 mm.** Shrinking removes the router's spare corridors, so the
   smaller board is a *new* routing claim, not an inherited one: 52, 53, 54, 55,
   56, 57 and 58 mm were each regenerated end-to-end and each reported 16/16 nets
-  routed with 0 DRC errors and 0 warnings. 51 mm is where it stops, and it stops
-  badly — `tools/route.py` raises `IndexError: bytearray index out of range`
-  from `_open()`, i.e. a pad's escape spoke walks off the bottom of the grid
-  instead of the router reporting "no path". That is a router robustness bug,
-  not a design limit, and it sits 6 mm below the outline chosen here.
+  routed with 0 DRC errors and 0 warnings. 52 mm is still the lowest *clean*
+  height. 51 mm now routes 16/16 as well, but DRC reports 2
+  `copper_edge_clearance` errors there (`N_AC` passing 0.25 mm from the outline),
+  so the copper would have to move before the board could go lower; from 50 mm
+  down the router reports its own failure — `no path PS1.2 -> R2.1 [cells=49
+  pad-veto=0 copper-veto L0=20/L1=20 free L0=29/L1=29]` at 50 mm, 15/16 nets
+  from 50 to 44 mm and 14/16 at 43 mm and below.
+- 51 mm *used to* raise `IndexError: bytearray index out of range` from
+  `_open()` instead of reporting anything — a pad's escape spoke walking off the
+  bottom of the grid. That was a router robustness bug, not a design limit:
+  `Grid.is_blocked()` indexed the bytearray with any cell it was handed, and now
+  refuses an off-grid cell the way `unblock()`, `block()` and `inside()` already
+  did. `tools/tests/test_route_open.py` pins it (a pad within `cr` of an edge, no
+  exception). The fix moves no copper: regenerate this board and it is item for
+  item the committed one.
 - **Nothing had to be rerouted.** At 57 mm the router lays the *same* 506 copper
   items as at 95 mm — compared item by item (net, layer, width, both endpoints):
   identical. Only the outline and the two lower mounting holes moved. So the
