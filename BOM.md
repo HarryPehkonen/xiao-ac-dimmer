@@ -66,6 +66,37 @@ on North American 120 V mains. Max input current <0.2A.
 the **part class**: an X2 or mains-duty film capacitor rated **250 VAC or
 better**. "400 V" is a DC rating; it is not the same claim.
 
+## The module (not on the PCB BOM)
+
+The board has no MCU on it — it mounts a **Seeed Studio XIAO ESP32C3** in two 2×7
+sockets (`J1`/`J2`), so the module never appears in the generated BOM. Order it
+separately.
+
+- **Part / SKU: `113991054`** (Seeed Studio; listed by Mouser under that same
+  manufacturer number, category "Multiprotocol Modules").
+- **Seeed direct** — seeedstudio.com, USD **$4.99**, in stock, sold 1pcs / 3pcs.
+  Has China, US and German warehouses; **no Canadian warehouse**, so a Canadian
+  order ships from China or the US.
+- **Mouser Canada** (mouser.ca) lists the same number for CAD pricing.
+- **DigiKey CA** returns 5 results for "XIAO ESP32C3" and hosts this part's
+  datasheet, but its part number and stock **were not verified** — its result
+  list would not render into text for me. Confirm on the page rather than
+  trusting a `-ND` number written here.
+
+**Order the Pre-Soldered variant.** `J1`/`J2` are female sockets, so the module
+needs pins on it; Un-Soldered means hand-soldering 14 pins.
+
+**Get the ESP32C3, not the ESP32S3 or C6.** They share the footprint and would
+plug in, but the pin↔GPIO mapping differs, and this design assigns `D1`=GPIO3
+(triac trigger) and `D2`=GPIO4 (zero-cross input). A different variant fits the
+board and silently fires the wrong pins.
+
+Two practical notes: 2.4 GHz does not pass through a metal enclosure, so use a
+non-metallic box (or run the module's U.FL connector to an external antenna) —
+and keep the antenna end away from `PS1` and the mains wiring. Flashing is over
+USB-C; the `SS14` (`D5`) is there so USB 5 V and the PSU's 5 V can coexist
+without one back-feeding the other.
+
 ## Mechanical — mounting
 
 Four M3 clearance holes, one per corner, **5mm inset** from each board edge.
