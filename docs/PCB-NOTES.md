@@ -7,12 +7,14 @@ with the schematic about connectivity.
 
 ## What works
 
-- 24 footprints on a 150 × 57 mm outline: 20 parts placed by the zone packer
-  (mains / barrier / logic) plus the 4 M3 mounting holes. No courtyard overlaps.
-  The outline is sized to the packed parts (they span 41.9 mm; the old 95 mm
-  board was 40% dead space along one edge) — see "Board size" below.
+- 24 footprints on a 150 × 57 mm outline: **18 parts placed by the zone packer**
+  (mains / barrier / logic), the **XIAO socket block** (J1 + J2, one locked
+  group — see "The XIAO socket" below), and the 4 M3 mounting holes. No
+  courtyard overlaps. The outline is sized to the packed parts (they span
+  41.9 mm; the old 95 mm board was 40% dead space along one edge) — see
+  "Board size" below.
 - 16 nets assigned from `kicad-cli sch export netlist`, and **16/16 routed**
-  (491 track segments, 15 vias).
+  (487 track segments, 15 vias).
 - `xiao-ac-dimmer.kicad_dru` carries the isolation barrier as a machine-checked
   rule: **3 mm clearance between mains nets and everything else**, 1 mm minimum
   mains track width.
@@ -22,9 +24,72 @@ with the schematic about connectivity.
 - Every footprint id carries its **library nickname** (`Resistor_THT:R_Axial_…`,
   not `R_Axial_…`), so "update footprint from library" works — the workflow any
   part swap needs. `FootprintLoad()` was dropping it on placement.
-- `check_board.py` is wired into `tools/ci.sh`, so a board that stops routing,
-  gains a violation, loses a footprint's library link, or loses a mounting
-  hole's copper keepout fails the same gate as a stale schematic.
+- `check_board.py` is wired into `tools/ci.sh` **together with its own tests**
+  (`pytest tools/tests`), so a board that stops routing, gains a violation,
+  loses a footprint's library link, loses a mounting hole's copper keepout, or
+  stops being able to accept its XIAO fails the same gate as a stale schematic.
+  The socket rules are the ones ERC and DRC cannot express — see "The XIAO
+  socket".
+
+## The XIAO socket (and the class of bug it exposed)
+
+Harri caught this from a render, not from a tool: `J1`/`J2` were two *independent*
+generic 1×7 sockets 6.1 mm apart on a 150 × 57 mm board. Pitch ✓, 7 + 7 = 14
+pins ✓, 16/16 nets routed, ERC clean, DRC clean — **and the module cannot
+physically seat**, because a XIAO needs the two rows **15.24 mm** apart.
+
+Nothing in the pipeline was wrong. Every footprint was individually valid and
+the nets were correct; **the mating interface only exists in the pair**, and no
+ERC or DRC rule looks at a pair. A generic 1×7 socket has no idea it is half of
+a module socket. Assertion against the mating part's own numbers is the only
+defence, which is why `check_board.py` now measures the pair.
+
+**The number, and where it comes from.** Not from the issue: from the mating
+part's own KiCad footprint — `OPL_Kicad_Library`,
+`Seeed Studio XIAO Series Library/XIAO-ESP32-C3-DIP.kicad_mod`
+(github.com/Seeed-Studio/OPL_Kicad_Library). Its two rows put their pads at
+**y = ±7.620 mm → 15.24 mm** apart, 7 pads per row on 2.54 mm, module body
+**17.8 mm** across the rows and 21.0 mm along them. That agrees with the wiki's
+21 × 17.5 mm drawing to the tenth of a millimetre, so 15.24 mm is the number the
+gate asserts; `XIAO["row_sep"]` carries it with the source in a comment.
+
+What the fix changes in `tools/gen_pcb.py`:
+
+- **`XIAO`** is the module's geometry in one table: `row1_x`, `pin1_y`, `pitch`,
+  `per_row`, `row_sep`, `width`, and the module's overhang at each end
+  (`usb_overhang` 2.921 mm, `tail` 2.794 mm), the socket's own drill (`hole`
+  1.0 mm) and the drill Seeed uses for the module's pins (`pin_drill` 0.889 mm).
+- **`place_xiao()`** places *both* rows from that one entry and locks them. It
+  moves each row's **pad 1** onto the wanted point rather than setting the
+  footprint's position, which would silently assume the footprint's origin is
+  its pad 1 — true for KiCad's `PinSocket_1x07` today, and exactly the kind of
+  assumption this change exists to stop making.
+- The two rows are **one `XIAO_SOCKET` PCB_GROUP**: one part, 14 holes, one
+  placement. The packer never sees them (they are excluded from the strips), so
+  it cannot choose their separation again.
+- **`xiao_envelope()`** is the 17.8 × 20.955 mm area the module body occupies
+  over the sockets, drawn on **F.CrtYd**. It is a keepout in both directions:
+  the gate fails if any other footprint reaches into it, and the packer refuses
+  to place a part there.
+
+**Which physical side is which.** Both rows' pad 1 is at the **USB-C end**
+(y = 13 mm, towards the top edge), because the module's pin 1 is at its USB-C
+end. Looking at the board from the top with the USB-C connector up: **J1
+(x = 130 mm) is the module's left column, D0…D6** top to bottom, nearest the
+mains section, and **J2 (x = 145.24 mm) is its right column — 5V, GND, 3V3,
+D10, D9, D8, D7** (Seeed's front pinout diagram, and the schematic's `val`
+fields say the same). The two pins that matter are on J1: **pad 2 = D1/GPIO3 =
+`GATE_DRV`** (the triac trigger) and **pad 3 = D2/GPIO4 = `ZCD_OUT`**
+(zero-cross). Both would have gone to the wrong pin / the wrong end had a row
+been reversed, which is now a gate failure.
+
+**It cost board area, and the board did not have to grow.** The socket block
+takes 19 mm of the right-hand strip (x 128.72 → 146.52, 3.48 mm from the
+outline) instead of the 7.5 mm two loose sockets used. The card expected the
+150 mm board to have to grow; repacking the four strips absorbed it instead —
+but this is a **new routing**, not the old one carried over: 487 track segments
+instead of 491, so 16/16 nets and 0 errors / 0 warnings are re-measured claims
+(see "How the last two nets were closed" for the retry that was needed).
 
 ## Mounting holes
 
@@ -115,6 +180,24 @@ Two changes, neither touching a clearance constant:
    `gen_pcb.py` slides any visible reference/value field down until its
    bounding box is clear.
 
+The ordering key was not enough on its own once the XIAO socket block moved the
+parts (see "The XIAO socket"). `GND` and `ZCD_OUT` come out **equal** on the
+free-cell key, so the tie-break decides which of them wins the corridor; the
+span tie-break (`min` pad-to-pad hop, now the last key) then walls `ZCD_OUT`
+out: one pass finishes **15/16** with `no path R5.2 -> U1.5`.
+
+So `route()` now makes up to `ATTEMPTS` (4) passes and, after a pass with
+failures, **promotes the nets that failed to the front of the next ordering**
+(`_promote()`), keeping the relative order inside each group so a retry is
+deterministic. Measured on this board: pass 1 = 15/16, pass 2 = 16/16, and the
+result prints which ordering it took (`routed 16/16 nets (order 2)`), so a
+board that needs the retry says so instead of hiding it. `route()` also reports
+`attempts` for the tests. The copper of a failed pass is thrown away rather than
+left on the board, and the retry re-lays it — which
+`tools/tests/test_board_gate.py :: test_a_rerouted_board_is_still_clean` then
+puts through DRC, because "the first ordering failed" is not something DRC
+would have noticed.
+
 The router's per-pad escape spoke was also extracted into the pure function
 `_escape_dirs()` (perpendicular to the nearest neighbour) so its geometry is
 unit-tested.
@@ -131,7 +214,18 @@ unit-tested.
 
 ## Why the board has no "matches the generator" hash check
 
-The schematic has one (`tools/ci.sh` hashes it, regenerates, compares hashes).
+One pipeline side effect to know about: **`pcbnew.SaveBoard()` rewrites the
+`.kicad_pro`** when the board is written back into its own project directory —
+KiCad expands the repo's 27-line minimal project into its full default project
+file (~285 lines, `3dviewports`, `design_settings` and all). Measured
+2026-11-03 with KiCad 9: `LoadBoard` + `SaveBoard` in a *temp* directory leaves
+the project alone; saving into the directory that holds the project rewrites it.
+Nothing in it changes this board (DRC and `check_board.py` are clean with either
+version), so regenerating and then reverting the project file keeps the diff
+readable: `git checkout -- xiao-ac-dimmer.kicad_pro`.
+
+The schematic has a hash check (`tools/ci.sh` hashes it, regenerates, compares
+hashes).
 The board cannot, and that is not a defect in the gate: KiCad gives every item a
 fresh UUID on each run and writes footprints in an order derived from those
 UUIDs, so two runs of the same generator never produce the same bytes. Two runs

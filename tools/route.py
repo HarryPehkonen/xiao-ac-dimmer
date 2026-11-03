@@ -48,6 +48,9 @@ VIA_R_MAINS, VIA_R_SIGNAL = 0.5, 0.4     # via copper radius: 1.0 / 0.8 mm
                                    # *track* half-width left them 0.2 mm
                                    # under-sized and tracks clipped the vias.
 VIA_COST = 12                   # in cells, so vias are used deliberately
+ATTEMPTS = 4                    # orderings the router may try before giving up
+                                # (see route(): the order key is a heuristic and
+                                #  one pass can wall in a net the next one routes)
 QUANT = GRID * 0.71             # half a cell diagonal: blocking is per cell
                                 # centre, so every radius needs this much
                                 # slack or tracks clip pads between cells
@@ -359,8 +362,47 @@ def _open(grid, pad, mine, all_pads, vetoes):
                     grid.unblock(cx, cy, l)
 
 
-def route(board, netitems, nets, verbose=True):
-    """Route every net.  Returns {'routed': n, 'failed': {net: reason}}."""
+def _order_key(board, nets):
+    """The net order one attempt uses.
+
+    Shortest pad-to-pad hop in the net: short nets route first, while there is
+    still room, instead of being walled in by the long ones.
+    """
+    def span(n):
+        ps = _pads(board, n)
+        if len(ps) < 2:
+            return 0
+        best = None
+        for i, a in enumerate(ps):
+            for b in ps[i + 1:]:
+                pa, pb = a.GetPosition(), b.GetPosition()
+                d = ((pa.x - pb.x) ** 2 + (pa.y - pb.y) ** 2) ** 0.5
+                best = d if best is None else min(best, d)
+        return best
+
+    # Sort by the static free-cell count of each net's tightest pad, most room
+    # first, ahead of the old length-only key: ordering a net late is what finds
+    # its pad already walled in, and this key removes that hazard without
+    # touching a clearance constant.
+    #
+    # Most-room-first, not most-constrained-first -- measured, not reasoned:
+    # flipping the sign to claim the tightest pad first leaves 14/16 nets with
+    # 6 DRC errors (MOC_A and ZCD_OUT lose their paths, four shorts appear), so
+    # the ordering that reads like the right advice is the one that fails.
+    _allpads = [(p, (fp.GetReference(), p.GetNumber()))
+                for fp in board.GetFootprints() for p in fp.Pads()]
+    return sorted(nets, key=lambda n: (n not in MAINS, len(nets[n]) > 2,
+                                       -_free_score(board, n, _allpads),
+                                       span(n)))
+
+
+def _pass(board, netitems, nets, order):
+    """One routing attempt, in `order`.  Returns (failed, created).
+
+    `created` is what this attempt laid down, *not yet on the board*: a failed
+    attempt is thrown away whole, so trying the next ordering does not have to
+    rip copper back out of it.
+    """
     g_sig, g_mains = Grid(), Grid()        # keepout the active net obeys
     # Four records of routed copper, one per (copper class, consumer class)
     # clearance pair, so that opening a pad never shaves the outer ring off an
@@ -387,36 +429,8 @@ def route(board, netitems, nets, verbose=True):
         for g in (g_sig, g_mains, keepout):
             g.block_disc(hx, hy, MOUNT_BLOCK_R)
 
-    def span(n):
-        """Shortest pad-to-pad hop in the net: short nets route first, while
-        there is still room, instead of being walled in by the long ones."""
-        ps = _pads(board, n)
-        if len(ps) < 2:
-            return 0
-        best = None
-        for i, a in enumerate(ps):
-            for b in ps[i + 1:]:
-                pa, pb = a.GetPosition(), b.GetPosition()
-                d = ((pa.x - pb.x) ** 2 + (pa.y - pb.y) ** 2) ** 0.5
-                best = d if best is None else min(best, d)
-        return best
-
-    # Sort by the static free-cell count of each net's tightest pad, most room
-    # first, ahead of the old length-only key: ordering a net late is what finds
-    # its pad already walled in, and this key removes that hazard without
-    # touching a clearance constant.
-    #
-    # Most-room-first, not most-constrained-first -- measured, not reasoned:
-    # flipping the sign to claim the tightest pad first leaves 14/16 nets with
-    # 6 DRC errors (MOC_A and ZCD_OUT lose their paths, four shorts appear), so
-    # the ordering that reads like the right advice is the one that fails.
-    _allpads = [(p, (fp.GetReference(), p.GetNumber()))
-                for fp in board.GetFootprints() for p in fp.Pads()]
-    order = sorted(nets, key=lambda n: (n not in MAINS, len(nets[n]) > 2,
-                                        -_free_score(board, n, _allpads),
-                                        span(n)))
+    created = []                 # this attempt's copper, added only if it works
     failed = {}
-    routed = 0
     all_pads = []
 
     for fp in board.GetFootprints():
@@ -452,7 +466,6 @@ def route(board, netitems, nets, verbose=True):
                   (cop_m2m, cop_s2m, keepout) if mains
                   else (cop_m2s, cop_s2s, keepout))
 
-        ok = True
         segs, vias = [], []
         anchor = pads[0]
         for pad in pads[1:]:
@@ -469,7 +482,6 @@ def route(board, netitems, nets, verbose=True):
                 why = _diagnose(grid, pad, mine, all_pads, vet)
                 failed[net] = (f"no path {_ref(anchor)}.{anchor.GetNumber()}"
                                f" -> {_ref(pad)}.{pad.GetNumber()} [{why}]")
-                ok = False
                 break
             for i, (prev, cur) in enumerate(zip(path, path[1:])):
                 if prev[2] != cur[2]:
@@ -491,7 +503,7 @@ def route(board, netitems, nets, verbose=True):
                     via.SetDrill(pcbnew.FromMM(0.4 if not mains else 0.5))
                     via.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu)
                     via.SetNet(netitems[net])
-                    board.Add(via)
+                    created.append(via)
             for a, b in _to_segments(path):
                 t = pcbnew.PCB_TRACK(board)
                 t.SetStart(pcbnew.VECTOR2I(pcbnew.FromMM(_mm(a[0])),
@@ -501,7 +513,7 @@ def route(board, netitems, nets, verbose=True):
                 t.SetWidth(pcbnew.FromMM(width))
                 t.SetLayer(pcbnew.F_Cu if a[2] == 0 else pcbnew.B_Cu)
                 t.SetNet(netitems[net])
-                board.Add(t)
+                created.append(t)
             segs.extend(path)
             anchor = pad
         # the new copper becomes an obstacle for later nets, on the layer it
@@ -527,12 +539,55 @@ def route(board, netitems, nets, verbose=True):
             for g, r in ((g_sig, clear), (g_mains, own)):
                 g.block_disc(pcbnew.ToMM(p.x), pcbnew.ToMM(p.y),
                              _pad_half(pad) + r + half + QUANT)
-        if ok:
-            routed += 1
+    return failed, created
+
+
+def _promote(order, failed):
+    """The next ordering to try: the nets that failed, then the rest.
+
+    Relative order inside each group is kept, so a retry is deterministic and a
+    second failure of the same net means it really cannot route.
+    """
+    return ([n for n in order if n in failed]
+            + [n for n in order if n not in failed])
+
+
+def route(board, netitems, nets, verbose=True, attempts=ATTEMPTS):
+    """Route every net.  Returns {'routed': n, 'failed': {net: reason}, ...}.
+
+    One pass, in the order `_order_key()` produces.  If a net is left
+    unconnected, the pass is thrown away and re-run with the nets that failed
+    promoted to the front -- a rip-up and retry, bounded at `attempts`.
+
+    Why this exists (measured, on this board, 2026-11-03): the order key is a
+    heuristic and its ties are broken by span, which makes the *outcome*
+    discontinuous in sub-millimetre pad geometry.  Moving the XIAO sockets onto
+    the module's real 15.24 mm rows left the pad J1.3 one grid cell narrower
+    (30 free cells -> 29, a 0.175 mm shift of the pad's own position inside the
+    0.5 mm grid), which tied ZCD_OUT (29 free, span 15.2) with GND (29, span
+    5.3) and handed the earlier slot to GND by the span tie-break.  GND routes
+    first, walls in the R5.2 -> U1.5 corridor, and 15/16 becomes 16/16 only
+    when the two are swapped (both measured).  Rather than pin a pad position
+    that only works because of a cell count, the router is allowed to try
+    again.
+    """
+    order = _order_key(board, nets)
+    failed, created = {}, []
+    tries = 0
+    for tries in range(1, attempts + 1):
+        failed, created = _pass(board, netitems, nets, order)
+        if not failed:
+            break
+        order = _promote(order, failed)
+    for item in created:               # the best attempt we got
+        board.Add(item)
+    routed = (sum(1 for n in nets if len(_pads(board, n)) >= 2)
+              - len(failed))
     if verbose:
         print(f"routed {routed}/{len(nets)} nets"
+              + (f" (order {tries})" if tries > 1 else "")
               + (f", failed: {failed}" if failed else ""))
-    return {"routed": routed, "failed": failed}
+    return {"routed": routed, "failed": failed, "attempts": tries}
 
 
 def _ref(pad):

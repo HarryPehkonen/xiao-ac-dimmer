@@ -31,11 +31,12 @@ def mm(v):
 
 
 # ---------------------------------------------------------------- placement --
-# Board is 150 x 57 mm in five vertical strips.  Mains lives on the left;
-# PS1, U2 and U1 straddle the middle strip because their own creepage is the
-# barrier; logic sits on the right.  Parts are *packed* inside their strip
-# (row by row, no overlaps by construction) rather than hand-placed, so the
-# same script keeps working when the part list changes.
+# Board is 150 x 57 mm: four vertical packing strips plus the XIAO socket
+# block on the right.  Mains lives on the left; PS1, U2 and U1 straddle the
+# middle strip because their own creepage is the barrier; logic sits on the
+# right.  Parts are *packed* inside their strip (row by row, no overlaps by
+# construction) rather than hand-placed, so the same script keeps working when
+# the part list changes.  The socket block is not packed -- see XIAO below.
 #
 # A strip is (x0, y0, x1): packing starts at y0 and wraps to a new row once it
 # would cross x1.  Rows run downwards until the part list is exhausted, so the
@@ -62,8 +63,11 @@ GROUPS = [
     # logic-side resistors and the 5 V rail, right of the barrier
     ((100, 9, 126), [("R3", 90), ("R5", 0), ("D5", 0), ("C1", 0),
                      ("C2", 0)]),
-    ((130, 9, 147), [("J1", 0), ("J2", 0)]),
 ]
+# J1/J2 are deliberately NOT in the strips above: the XIAO socket pair is one
+# object with the *module's* geometry, placed by XIAO/place_xiao() below.  It
+# used to be a fifth strip of two free 1x7 headers, which is how the board got
+# a socket pair 6.1 mm apart for a module that needs 15.24 mm.
 MARGIN = 2.5          # mm between packed parts
 # The outline is sized to the packed parts, not chosen up front -- which is the
 # mistake this board made once: 95 mm was bought while the router was failing,
@@ -102,6 +106,83 @@ MOUNTING = [
     ("H4", BOARD_W - MOUNT_INSET, BOARD_H - MOUNT_INSET),
 ]
 
+# ------------------------------------------------------------- XIAO socket --
+# The socket pair's job is to mate with a Seeed XIAO, so its geometry is the
+# *module's*, not a placement decision.  Placing J1 and J2 as two free 1x7
+# headers is what produced the bug this table replaces: the packer put them
+# 6.1 mm apart (two footprint widths plus MARGIN), ERC was clean, DRC was
+# clean, 16/16 nets routed -- and the module could not physically seat.  Mating
+# geometry is invisible to both checkers: every footprint is valid on its own,
+# the nets are right, and nothing looks at the *pair*.  So it is stated here
+# once and asserted on the finished board in check_board.py.
+#
+# Numbers from Seeed's own KiCad footprint for the module's DIP variant
+# (github.com/Seeed-Studio/OPL_Kicad_Library, "Seeed Studio XIAO Series
+# Library/XIAO-ESP32-C3-DIP.kicad_mod"): the mating part's own geometry, which
+# beats a number read off a drawing, and it is where the 15.24 mm comes from
+# rather than from an estimate.
+#
+#   through-hole pads    y = +/-7.620         -> row separation 15.240 mm
+#   pad pitch            2.540 mm
+#   silk body outline    x -10.414 .. 10.541  -> module length 20.955 mm
+#   courtyard (F.CrtYd)  x -10.425 .. 10.550, y +/-8.900 -> 20.975 x 17.8 mm
+#   USB-C shell outline  x 10.541 .. 12.051   -> overhangs the module edge by
+#                        1.51 mm, at the pin-1 end.
+#
+# Orientation, from Seeed's front-pinout image and their symbol library, which
+# agree: viewed from the component side with the USB-C connector at the top,
+# the left column reads D0..D6 downwards and the right column reads 5V (VBUS),
+# GND, 3V3, D10, D9, D8, D7.  D0 and VBUS are the pins *nearest the USB-C
+# end*; the antenna is at the far end.  On this board the module stands with
+# its rows vertical and its USB-C end towards the top edge (y = 0):
+#
+#   J1 = the module's left column  (D0..D6), pad column at x = row1_x
+#   J2 = the module's right column (5V, GND, 3V3, D10, D9, D8, D7), one
+#        row_sep to its right
+#   pin 1 of BOTH rows is at the top (y = pin1_y), i.e. at the USB-C end.
+#
+# That is the way round the schematic already reads: J1.2 = D1 (GPIO3, the
+# triac trigger) and J1.3 = D2 (GPIO4, the zero-cross input) are the second and
+# third pins down from the USB-C end.  Rotate either row by 180 deg and the
+# board fires the wrong pin -- silently, because the nets are still correct.
+XIAO = {
+    "row1_x": 130.0,          # mm, J1's pad column (the module's left column)
+    "pin1_y": 13.0,           # mm, pad 1 of each row = the USB-C end
+    "pitch": 2.54,            # mm, pad pitch along a row
+    "per_row": 7,             # pads per row (7 + 7 = the module's 14)
+    "row_sep": 15.24,         # mm, Seeed: pads at y = +/-7.620
+    "width": 17.8,            # mm across the rows (Seeed courtyard y +/-8.9)
+    "usb_overhang": 2.921,    # mm, module edge beyond pin 1 (10.541 - 7.620)
+    "tail": 2.794,            # mm, module edge beyond pin 7 (7.620 - -10.414)
+    "connector": 1.51,        # mm, USB-C shell beyond the module edge
+    "hole": 1.0,              # mm, the socket's own drill (KiCad's PinSocket)
+    "pin_drill": 0.889,       # mm, Seeed drill the module's own pins into
+    "rows": ("J1", "J2"),     # left column, right column
+}
+XIAO_GROUP = "XIAO_SOCKET"
+
+
+def xiao_envelope():
+    """(x0, y0, x1, y1) mm of the module body over the sockets.
+
+    The XIAO is a single-sided module: its body sits *above* the sockets and
+    its pins hang below it, so this is the area that has to stay clear of other
+    footprints.  Along the rows it is the 15.24 mm pin field plus the module's
+    own overhang at each end (2.921 mm at the USB end, 2.794 mm at the
+    antenna end); across the rows it is the module's 17.8 mm width.
+    """
+    cx = XIAO["row1_x"] + XIAO["row_sep"] / 2
+    y1 = XIAO["pin1_y"] + (XIAO["per_row"] - 1) * XIAO["pitch"]
+    return (cx - XIAO["width"] / 2, XIAO["pin1_y"] - XIAO["usb_overhang"],
+            cx + XIAO["width"] / 2, y1 + XIAO["tail"])
+
+
+def xiao_clearance_to_edge():
+    """How much board is left outside the module envelope, per side, in mm."""
+    x0, y0, x1, y1 = xiao_envelope()
+    return {"left": x0, "top": y0, "right": BOARD_W - x1, "bottom": BOARD_H - y1}
+
+
 
 def place_all(fps):
     """Pack each group's parts into rows inside its zone.  Returns
@@ -124,7 +205,78 @@ def place_all(fps):
             out[ref] = (round(cx, 2), round(cy, 2), rot)
             cx += w + MARGIN
             rowh = max(rowh, h)
+
+    # No packed part may land in the module envelope.  check_board.py asserts
+    # this on the finished board too; failing here instead means the generator
+    # says which part did it and why, at the point the strip table could have
+    # been wrong, rather than leaving a board that only the gate rejects.
+    bx0, by0, bx1, by1 = xiao_envelope()
+    for ref, fp in fps.items():
+        if ref in XIAO["rows"]:
+            continue
+        bb = fp.GetBoundingBox(False, False)
+        ex0, ey0 = pcbnew.ToMM(bb.GetX()), pcbnew.ToMM(bb.GetY())
+        ex1 = ex0 + pcbnew.ToMM(bb.GetWidth())
+        ey1 = ey0 + pcbnew.ToMM(bb.GetHeight())
+        if ex0 < bx1 and ex1 > bx0 and ey0 < by1 and ey1 > by0:
+            raise SystemExit(
+                f"{ref} packs into the XIAO module envelope "
+                f"({bx0:g}, {by0:g})-({bx1:g}, {by1:g}) mm: the module body "
+                f"sits there.  Move its packing strip.")
     return out
+
+
+def place_xiao(fps):
+    """Place both rows of the socket from ONE table entry.
+
+    The two rows are one part: their separation and their pin-1 ends come from
+    XIAO above, and the packer never sees them.  Each is placed by moving its
+    *pad 1* onto the wanted point -- not by setting the footprint's position,
+    which would silently assume the footprint's origin is its pad 1 (true for
+    this socket footprint today, and exactly the kind of assumption this whole
+    change exists to stop making).
+    """
+    out = {}
+    for i, ref in enumerate(XIAO["rows"]):
+        fp = fps[ref]
+        fp.SetOrientationDegrees(0)
+        pad1 = next(p for p in fp.Pads() if p.GetNumber() == "1")
+        want = (XIAO["row1_x"] + i * XIAO["row_sep"], XIAO["pin1_y"])
+        pos, p = fp.GetPosition(), pad1.GetPosition()
+        fp.SetPosition(pcbnew.VECTOR2I(pos.x + MM(want[0]) - p.x,
+                                       pos.y + MM(want[1]) - p.y))
+        fp.SetLocked(True)
+        out[ref] = (want[0], want[1], 0)
+    return out
+
+
+def group_xiao(board, by_ref):
+    """Join the two rows into one object, so the editor moves them together."""
+    group = pcbnew.PCB_GROUP(board)
+    group.SetName(XIAO_GROUP)
+    board.Add(group)
+    for ref in XIAO["rows"]:
+        group.AddItem(by_ref[ref])
+    return group
+
+
+def draw_xiao_envelope(board):
+    """Draw the module envelope on the courtyard layer.
+
+    A courtyard is the layer whose meaning is "nothing else goes here", so the
+    envelope is drawn as one rather than described in a comment.  It is a board
+    graphic, not a footprint: check_board.py measures it against XIAO above and
+    asserts no other footprint's courtyard touches it.
+    """
+    x0, y0, x1, y1 = xiao_envelope()
+    rect = pcbnew.PCB_SHAPE(board)
+    rect.SetShape(pcbnew.SHAPE_T_RECT)
+    rect.SetStart(pcbnew.VECTOR2I(MM(x0), MM(y0)))
+    rect.SetEnd(pcbnew.VECTOR2I(MM(x1), MM(y1)))
+    rect.SetLayer(pcbnew.F_CrtYd)
+    rect.SetWidth(MM(0.05))
+    board.Add(rect)
+    return rect
 
 
 # Nets routed on the bottom layer; everything else uses the top.
@@ -218,6 +370,7 @@ def build():
         fp.SetValue(part["val"])
         fps[part["ref"]] = fp
     placed = place_all(fps)
+    placed.update(place_xiao(fps))
     for ref, fp in fps.items():
         try:
             fp.AutoPlaceFields()          # keeps reference text off the
@@ -227,6 +380,9 @@ def build():
     for ref, fp in fps.items():
         board.Add(fp)
         by_ref[ref] = fp
+    # One object, one placement: the two socket rows are locked and grouped,
+    # so nothing in the editor (or here) can drift them apart again.
+    group_xiao(board, by_ref)
     if "--dump" in sys.argv or "-v" in sys.argv:
         for ref, (x, y, rot) in sorted(placed.items()):
             print(f"  {ref:<5} at ({x:>6}, {y:>6}) rot {rot}")
@@ -262,6 +418,9 @@ def build():
         seg.SetLayer(pcbnew.Edge_Cuts)
         seg.SetWidth(MM(0.15))
         board.Add(seg)
+
+    # --- the XIAO's keepout, drawn on the courtyard layer -------------------
+    draw_xiao_envelope(board)
 
     if "--no-route" not in sys.argv:
         import route as router
@@ -308,6 +467,13 @@ if __name__ == "__main__":
         build()
         print(f"wrote {BOARD}")
         fp_count = len(list(pcbnew.LoadBoard(BOARD).GetFootprints()))
+        x0, y0, x1, y1 = xiao_envelope()
         print(f"  {fp_count} footprints, {len(schematic_nets())} nets, "
               f"board outline {BOARD_W:g} x {BOARD_H:g} mm, "
               f"{len(MOUNTING)} mounting holes")
+        print(f"  XIAO socket {XIAO_GROUP}: {len(XIAO['rows'])} rows of "
+              f"{XIAO['per_row']} at {XIAO['pitch']:g} mm pitch, "
+              f"{XIAO['row_sep']:g} mm apart; module envelope "
+              f"({x0:g}, {y0:g})-({x1:g}, {y1:g}) = "
+              f"{x1 - x0:g} x {y1 - y0:g} mm, "
+              f"{xiao_clearance_to_edge()['right']:g} mm to the right edge")
