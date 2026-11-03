@@ -52,19 +52,23 @@ a generated one can (see Gates).
    writes items in its own order), so this compares geometry, which is the part
    a person would have had to edit. `docs/PCB-NOTES.md` has the measurement and
    the two sabotage runs.
-6. **The gates' own tests.** `tools/tests/test_board_gate.py` breaks the socket
-   rules check 4 enforces and asserts `check_board.py` reports each one — rows too
+6. **The gates' own tests.** `tools/tests/test_board_gate.py` breaks every rule
+   check 4 enforces — all three families, on a copy of the committed board — and
+   asserts `check_board.py` reports each one by name. The socket: rows too
    close, a pin that is not in the row, an extra pin, a reversed row, a row
    renumbered, a part inside the module envelope, the wrong pitch, a hole too
    small for a module pin, a row out of the group, a missing group, an unlocked
    row, swapped rows, a missing or moved envelope, the trigger on the wrong pin,
-   a socket that is not a socket (no through-hole pad) — plus the router's
-   ordering and retry (`test_a_rerouted_board_is_still_clean` puts the retry
-   through DRC, which would not have noticed it).
-   Two of check 4's rule families are enforced but not yet broken by a case in
-   *this* repo — the library nicknames and the mounting holes; the mutations for
-   those live in `xiao-ac-ssr`'s copy of this file, so here they are read, not
-   proven.
+   a socket that is not a socket (no through-hole pad). The library nicknames: a
+   footprint id with no nickname, and the 24 nicknamed ids the board has to
+   carry. The mounting holes: one moved, one renamed, one missing, a track and a
+   pad inside the keepout, a hole tied to a net, a plated hole, a hole drilled
+   too small. Each case has also been seen to fail with the rule it targets
+   removed from `check_board.py`, so none of them passes by accident —
+   `docs/PCB-NOTES.md`, "What the gate's tests have been seen to do".
+   Then the router's ordering and retry
+   (`test_a_rerouted_board_is_still_clean` puts the retry through DRC, which
+   would not have noticed it).
    `tools/tests/test_pin_names.py` covers check 2's pin names: a renamed pin, the
    rows back to `Pin_1..Pin_7`, a renumbered row. `test_board_routes.py`
    regenerates and runs DRC; `test_route_geometry.py` and `test_route_open.py`

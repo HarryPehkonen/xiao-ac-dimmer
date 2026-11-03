@@ -23,7 +23,10 @@ with the schematic about connectivity.
   tracks are 1.5 mm wide on both layers.
 - Every footprint id carries its **library nickname** (`Resistor_THT:R_Axial_…`,
   not `R_Axial_…`), so "update footprint from library" works — the workflow any
-  part swap needs. `FootprintLoad()` was dropping it on placement.
+  part swap needs. `FootprintLoad()` was dropping it on placement, and
+  `check_board.py` has refused a bare-name id since `a32a414`; a case that breaks
+  it — and the mounting holes' rules with it — is what "What the gate's tests have
+  been seen to do" is about.
 - **The committed board is the generated board**: `tools/check_regen.py`, the
   fifth gate, regenerates in a throwaway copy of `tools/` and compares every
   footprint and copper item against `xiao-ac-dimmer.kicad_pcb` (24 and 502
@@ -32,7 +35,10 @@ with the schematic about connectivity.
   (`pytest tools/tests`), so a board that stops routing, gains a violation,
   loses a footprint's library link, loses a mounting hole's copper keepout, or
   stops being able to accept its XIAO fails the same gate as a stale schematic.
-  The socket rules are the ones ERC and DRC cannot express — see "The XIAO
+  All three rule families are broken by a case in this repo's copy of the test
+  file, and each case fails when the rule it targets is removed from
+  `check_board.py` — see "What the gate's tests have been seen to do". The
+  socket rules are the ones ERC and DRC cannot express — see "The XIAO
   socket".
 
 ## The XIAO socket (and the class of bug it exposed)
@@ -188,6 +194,77 @@ Two things fell out of adding them:
    3.45 mm back from its centre, so the packing strips start 9 mm from the top
    edge instead of hugging the outline. Not one net lost its path: still 16/16,
    still 0 errors and 0 warnings.
+
+Both rules the gate enforces here are now *seen* to fail: `check_board.py`
+measures the hole against the table, against the nearest edge, its pad
+attribute, its drill and the copper around it, and `tools/tests/`
+`test_board_gate.py` breaks each of those on a copy of the committed board —
+see the section below. The keepout is worth naming separately: it is the one
+rule in this file DRC has **no** rule for, so a filter or a router change that
+reaches into a hole's disc would otherwise ship quietly.
+
+## What the gate's tests have been seen to do
+
+`tools/check_board.py` enforces three rule families — every footprint id names
+its library, the four mounting holes are what the design says with an empty
+6 mm keepout, and the XIAO socket pair is a mating interface — and this repo's
+own standard is that a rule which has never been seen to fail is not a gate.
+Only the socket family was broken by a case: `a32a414` added the nickname and
+mounting-hole rules and touched no test, and `3929cc5` created
+`tools/tests/test_board_gate.py` with the 16 socket cases. The other nine cases
+existed in `xiao-ac-ssr`'s copy of the same file (that repo got the pass first).
+They were ported, not assumed: every string a case asserts was read back out of
+*this* repo's `check_board.py`, and the two boards happen to share the hole
+numbers (5 mm inset, 3.2 mm drill, 6 mm keepout) because they share the spec,
+not a constant.
+
+Ten cases were added. For each one the rule it targets was then removed from a
+working copy of `check_board.py` (`if False:` in place of the condition), the
+case was run on its own, and the file was restored and its hash re-checked.
+Every run was red, with the case's own assertion:
+
+```
+rule removed in check_board.py           case                                what pytest said
+if not str(fpid.GetLibNickname())        …no_library_nickname_fails          nothing said 'X1: ... no library nickname'
+if abs(x - wx) > POS_TOL or …            …a_moved_mounting_hole_fails         nothing said 'H1: ... table says'
+if abs(edge - MOUNT_INSET) > POS_TOL     …a_moved_mounting_hole_fails         nothing said 'H1: ... spec is 5 mm inset'
+the by_ref.get(ref) fallback             …a_renamed_mounting_hole_fails       nothing said 'H1: ... no footprint with the reference'
+if len(found) != len(MOUNTING)           …a_missing_mounting_hole_fails       nothing said '3 mounting hole footprint(s) on the board'
+elif clear < want                        …a_track_inside_the_keepout_fails    nothing said 'H2: ... copper comes within'
+elif clear < want                        …a_pad_inside_the_keepout_fails      nothing said 'H3: ... copper comes within'
+if pad.GetNetCode() != 0 or …            …tied_to_a_net_fails                 nothing said 'H1: ... must be isolated'
+if pad.GetAttribute() != PAD_ATTRIB_NPTH …a_plated_mounting_hole_fails        nothing said 'H2: ... not non-plated'
+if abs(drill - MOUNT_DRILL) > POS_TOL    …a_shrunk_mounting_hole_fails        nothing said 'H4: ... mm drill, spec is 3.2 mm'
+```
+
+The tenth case — `test_the_board_carries_one_nicknamed_footprint_per_part`, the
+positive half of the nickname rule — reads the committed board rather than the
+gate, so it was seen to fail from the other side: one `MountingHole:` prefix
+stripped out of `xiao-ac-dimmer.kicad_pcb` (the pre-`a32a414` state of that id).
+`check_board.py` then exited 1 and named it, and the case failed on the same
+footprint:
+
+```
+FAIL  H3: footprint id 'MountingHole_3.2mm_M3' carries no library nickname, so 'update footprint from library' cannot work
+E     AssertionError: H3 has no library nickname
+```
+
+One measured pitfall, now in the test file's header. `BOARD.Remove(<footprint>)`
+on a board loaded from disk *does* free the object out from under the swig
+binding — and while the case is passing nothing notices, but the moment it
+fails, pytest formats the traceback, the collector walks the dangling handle and
+the run dies with SIGSEGV before printing anything. That is how this pass's
+first "missing mounting hole" case reported `rc=-11` instead of an assertion;
+it now renames the footprint id out of `_is_mount()`'s reach, the same trick the
+group case uses, which is the same defect to the gate: a hole the design names
+that the board no longer carries. (`FOOTPRINT.Remove(pad)` and
+`BOARD.Remove(<drawing>)` are worse — they take a later, unrelated test down
+with them.)
+
+Scope: tests and this note. The gate is unchanged — every sabotage was reverted
+and the restored `tools/check_board.py` hash-checked against the pristine copy —
+and no rule was weakened to make a case pass. The board and the generator were
+not touched at all.
 
 ## Board size
 
